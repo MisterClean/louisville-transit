@@ -1,0 +1,112 @@
+{
+  "date": "2026-11-02",
+  "timezone": "America/New_York",
+  "source": "Local TARC collector SQLite, opened read-only",
+  "rows": 2698,
+  "routes": [
+    "01",
+    "03",
+    "04",
+    "05",
+    "08",
+    "10",
+    "20",
+    "71",
+    "72",
+    "76",
+    "81",
+    "94"
+  ],
+  "distinct_snapshots": 41,
+  "utc_range": [
+    "2026-11-02T22:00:33+00:00",
+    "2026-11-02T22:41:23+00:00"
+  ],
+  "subset_sha256": "52632bd552581852cc7602274944042d1162b2380d2f3a2e609278bed8161ef6",
+  "parquet_sha256": "9886bcd31cdad961676d9f22640ffcadb910bc63e2e2549cc13635b6aafa04f9",
+  "parquet_bytes": 24361,
+  "gzip_ndjson_bytes": 69735,
+  "reduction_percent": 65.06632250663225,
+  "reader": "PyArrow 26.0.0",
+  "columns": [
+    "ts",
+    "route",
+    "trip_id",
+    "vehicle_id",
+    "label",
+    "lat",
+    "lon",
+    "bearing",
+    "speed",
+    "occupancy",
+    "vehicle_ts",
+    "start_date"
+  ],
+  "physical_types": [
+    "int64",
+    "string",
+    "string",
+    "string",
+    "string",
+    "double",
+    "double",
+    "double",
+    "double",
+    "string",
+    "int64",
+    "string"
+  ],
+  "compression": [
+    "ZSTD"
+  ],
+  "row_group_rows": [
+    2698
+  ],
+  "record_multiset_equal": true,
+  "double_ieee754_bytes_equal": true,
+  "sort_order": [
+    "route",
+    "vehicle_id",
+    "ts"
+  ],
+  "null_counts": {
+    "ts": 0,
+    "route": 0,
+    "trip_id": 0,
+    "vehicle_id": 0,
+    "label": 0,
+    "lat": 0,
+    "lon": 0,
+    "bearing": 0,
+    "speed": 0,
+    "occupancy": 0,
+    "vehicle_ts": 0,
+    "start_date": 0
+  },
+  "duplicate_rows": 0,
+  "synthetic_edge_check": {
+    "rows": 3,
+    "duplicate_multiplicity_preserved": true,
+    "all_10_nullable_columns_null_preserved": true,
+    "pyarrow_physical_nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "note": "Separate synthetic check; real subset has no nulls or duplicate complete rows."
+  },
+  "limitations": [
+    "Partial-day bounded sample, not a full-day production archive or long-term resource benchmark",
+    "Actual sample contains no nulls or identical duplicate rows; these were tested separately with synthetic records",
+    "No raw observations or generated Parquet files are committed"
+  ]
+}

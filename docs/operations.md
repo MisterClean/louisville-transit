@@ -15,7 +15,7 @@ The standard polling interval is 60 seconds. Static GTFS and schedule indexes re
 - One US East replica, near Louisville; no preview environments or duplicate deployments.
 - Always awake because collection needs continuity. Autosleep would create gaps in evidence.
 - A 1 vCPU / 1 GB memory ceiling initially bounds runaway work. Limits are ceilings, not evidence of sustained usage; inspect measured memory during GTFS and media jobs before reducing them.
-- Raw positions retain seven days, compact trip status/predictions one day, and generated media is a bounded cache. Incident records and structured replay have separate persistent lifecycles.
+- Raw positions retain at least seven days and are pruned only after verified daily Parquet publication; compact trip status/predictions retain one day. Generated media is a bounded cache. Incident records, Parquet archives and structured replay have separate persistent lifecycles. See [archive operations](positions-archive.md).
 - HTTP compression and cache headers reduce transfer. Data uses short cache lifetimes; content-addressed application assets can be cached long-term.
 - Collection pauses before disk exhaustion; `/api/health` exposes available space. Archive growth still needs occasional review.
 

@@ -13,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 
 export const root = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -33,7 +35,33 @@ const mime = {
 	".csv": "text/csv; charset=utf-8",
 	".mp4": "video/mp4",
 	".xml": "application/xml; charset=utf-8",
+	".parquet": "application/vnd.apache.parquet",
 };
+
+// Public archives contain immutable objects and one mutable latest pointer.
+// Staging databases, locks and partial files must never be HTTP-readable.
+const archivePath =
+	/^positions\/(?:index\.json|manifests\/[a-f0-9]{64}\.json|bus\/\d{4}\/\d{2}\/\d{4}-\d{2}-\d{2}\.[a-f0-9]{64}\.parquet)$/;
+const archiveCors = {
+	"access-control-allow-origin": "*",
+	"access-control-expose-headers":
+		"Content-Length, Content-Range, Accept-Ranges, ETag",
+};
+function byteRange(value, size) {
+	const match = /^bytes=(\d*)-(\d*)$/.exec(value);
+	if (!match || (!match[1] && !match[2]) || size === 0) return null;
+	const first = match[1] ? Number(match[1]) : null;
+	const last = match[2] ? Number(match[2]) : null;
+	if (
+		(first !== null && !Number.isSafeInteger(first)) ||
+		(last !== null && !Number.isSafeInteger(last))
+	)
+		return null;
+	const start = first === null ? Math.max(0, size - last) : first;
+	const end =
+		first === null || last === null ? size - 1 : Math.min(last, size - 1);
+	return start >= size || end < start ? null : { start, end };
+}
 export function createRuntime(options = {}) {
 	const dataDir = path.resolve(
 		options.dataDir || process.env.DATA_DIR || path.join(root, "state"),
@@ -65,7 +93,8 @@ export function createRuntime(options = {}) {
 	};
 	let stopped = false,
 		child,
-		timer;
+		timer,
+		activeCycle;
 	const killJob = (processHandle, signal) => {
 		if (!processHandle?.pid) return;
 		try {
@@ -115,6 +144,15 @@ export function createRuntime(options = {}) {
 					`tarc_cycles_total ${state.cycles}\ntarc_failures_total ${state.failures}\ntarc_last_success_timestamp_seconds ${(state.last_success_at || 0) / 1000}\ntarc_job_running ${state.running ? 1 : 0}\nprocess_resident_memory_bytes ${process.memoryUsage().rss}\nprocess_uptime_seconds ${process.uptime()}\n`,
 				);
 			}
+			if (req.method === "OPTIONS" && raw.startsWith("/data/positions/")) {
+				res.writeHead(204, {
+					...archiveCors,
+					"access-control-allow-methods": "GET, HEAD, OPTIONS",
+					"access-control-allow-headers": "Range, If-Range, If-None-Match",
+					"access-control-max-age": "86400",
+				});
+				return res.end();
+			}
 			if (!["GET", "HEAD"].includes(req.method)) {
 				res.writeHead(405, { allow: "GET, HEAD" });
 				return res.end();
@@ -134,6 +172,9 @@ export function createRuntime(options = {}) {
 			let base = isData ? exportDir : staticDir;
 			const relative =
 				isData && !isArtifact ? decoded.slice(6) : decoded.slice(1);
+			const isArchive = isData && relative.startsWith("positions/");
+			if (isArchive && !archivePath.test(relative))
+				return send(res, 404, { error: "Not found" });
 			let filename = path.resolve(base, relative || "index.html");
 			if (!filename.startsWith(path.resolve(base) + path.sep))
 				return send(res, 404, { error: "Not found" });
@@ -169,6 +210,53 @@ export function createRuntime(options = {}) {
 				actualFile = await realpath(filename);
 			if (!actualFile.startsWith(actualBase + path.sep))
 				return send(res, 404, { error: "Not found" });
+			const archiveHash = isArchive
+				? relative.match(/([a-f0-9]{64})\.(?:parquet|json)$/)?.[1]
+				: null;
+			if (isArchive && filename.endsWith(".parquet")) {
+				const etag = `"${archiveHash}"`;
+				const headers = {
+					...archiveCors,
+					"content-type": mime[".parquet"],
+					"x-content-type-options": "nosniff",
+					"cache-control": "public, max-age=31536000, immutable",
+					"accept-ranges": "bytes",
+					etag,
+				};
+				if (
+					(req.headers["if-none-match"] || "")
+						.split(/\s*,\s*/)
+						.some((tag) => tag === "*" || tag.replace(/^W\//, "") === etag)
+				) {
+					res.writeHead(304, headers);
+					return res.end();
+				}
+				let range;
+				if (
+					req.method === "GET" &&
+					req.headers.range &&
+					(!req.headers["if-range"] || req.headers["if-range"] === etag)
+				) {
+					range = byteRange(req.headers.range, info.size);
+					if (!range) {
+						res.writeHead(416, {
+							...headers,
+							"content-range": `bytes */${info.size}`,
+							"content-length": 0,
+						});
+						return res.end();
+					}
+					headers["content-range"] =
+						`bytes ${range.start}-${range.end}/${info.size}`;
+				}
+				headers["content-length"] = range
+					? range.end - range.start + 1
+					: info.size;
+				res.writeHead(range ? 206 : 200, headers);
+				if (req.method === "HEAD") return res.end();
+				await pipeline(createReadStream(actualFile, range || {}), res);
+				return;
+			}
 			let body = await readFile(filename);
 			if (generatedPage) {
 				const assets = [
@@ -200,14 +288,17 @@ export function createRuntime(options = {}) {
 				}
 			}
 			const headers = {
+				...(isArchive ? archiveCors : {}),
 				"content-type":
 					mime[path.extname(filename)] || "application/octet-stream",
 				"x-content-type-options": "nosniff",
-				"cache-control": isData
-					? "no-cache"
-					: filename.includes(`${path.sep}assets${path.sep}`)
-						? "public, max-age=31536000, immutable"
-						: "no-cache",
+				"cache-control": archiveHash
+					? "public, max-age=31536000, immutable"
+					: isData
+						? "no-cache"
+						: filename.includes(`${path.sep}assets${path.sep}`)
+							? "public, max-age=31536000, immutable"
+							: "no-cache",
 				vary: "Accept-Encoding",
 			};
 			if (
@@ -222,6 +313,7 @@ export function createRuntime(options = {}) {
 			res.writeHead(200, headers);
 			res.end(req.method === "HEAD" ? undefined : body);
 		} catch (error) {
+			if (res.headersSent || res.destroyed) return res.destroy();
 			send(res, error instanceof URIError ? 400 : 500, {
 				error:
 					error.code === "ENOENT" ? "Assets unavailable" : "Request failed",
@@ -324,10 +416,13 @@ export function createRuntime(options = {}) {
 			await rename(temporary, path.join(dataDir, "runtime-health.json"));
 			if (!stopped)
 				timer = setTimeout(
-					() => cycle().catch(console.error),
+					launchCycle,
 					Number(process.env.POLL_INTERVAL_MS || 60000),
 				);
 		}
+	}
+	function launchCycle() {
+		activeCycle = cycle().catch(console.error);
 	}
 	return {
 		server,
@@ -336,7 +431,7 @@ export function createRuntime(options = {}) {
 		health,
 		start: async () => {
 			await mkdir(exportDir, { recursive: true });
-			cycle().catch(console.error);
+			launchCycle();
 		},
 		stop: async () => {
 			stopped = true;
@@ -346,6 +441,8 @@ export function createRuntime(options = {}) {
 			const force = setTimeout(() => killJob(activeChild, "SIGKILL"), 5000);
 			force.unref();
 			await new Promise((resolve) => server.close(resolve));
+			await activeCycle;
+			clearTimeout(force);
 		},
 	};
 }
@@ -353,7 +450,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	await stat(path.join(root, "apps/alerts/dist/index.html"));
 	let lastGtfs = 0,
 		lastMedia = 0,
-		lastPublish = 0;
+		lastPublish = 0,
+		lastArchive = 0;
 	const runtime = createRuntime({
 		cycle: async (run) => {
 			if (Date.now() - lastGtfs > 86400000) {
@@ -401,6 +499,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 				} finally {
 					lastPublish = Date.now();
 				}
+			}
+			if (Date.now() - lastArchive >= 3600000) {
+				await run("archive", "scripts/runtime/archive.js", 240000);
+				lastArchive = Date.now();
 			}
 			const health = JSON.parse(
 				await readFile(

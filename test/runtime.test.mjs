@@ -12,6 +12,137 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRuntime } from "../scripts/server.mjs";
 
+test("Parquet downloads stream ranges, support public readers, and hide staging files", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-parquet-http-"));
+	const hash = "a".repeat(64);
+	const relative = `positions/bus/2026/11/2026-11-02.${hash}.parquet`;
+	const bytes = Buffer.from("PAR1example immutable parquet payloadPAR1");
+	await mkdir(path.dirname(path.join(dir, relative)), { recursive: true });
+	await mkdir(path.join(dir, "positions", "manifests"));
+	await mkdir(path.join(dir, "positions", ".parquet-staging"));
+	await writeFile(path.join(dir, relative), bytes);
+	await writeFile(path.join(dir, "positions", "index.json"), "{}");
+	await writeFile(
+		path.join(dir, "positions", "manifests", `${hash}.json`),
+		"{}",
+	);
+	await writeFile(
+		path.join(dir, "positions", ".parquet-staging", "staging.duckdb"),
+		"private",
+	);
+	const runtime = createRuntime({
+		dataDir: dir,
+		exportDir: dir,
+		staticDir: dir,
+	});
+	await new Promise((resolve) =>
+		runtime.server.listen(0, "127.0.0.1", resolve),
+	);
+	const base = `http://127.0.0.1:${runtime.server.address().port}/data/`;
+	const url = base + relative;
+	try {
+		const head = await fetch(url, { method: "HEAD" });
+		assert.equal(head.status, 200);
+		assert.equal(
+			head.headers.get("content-type"),
+			"application/vnd.apache.parquet",
+		);
+		assert.equal(head.headers.get("content-length"), String(bytes.length));
+		assert.equal(head.headers.get("accept-ranges"), "bytes");
+		assert.equal(head.headers.get("access-control-allow-origin"), "*");
+		assert.equal(head.headers.get("etag"), `"${hash}"`);
+		assert.match(head.headers.get("cache-control"), /immutable/);
+		assert.equal((await head.arrayBuffer()).byteLength, 0);
+		const full = await fetch(url, { headers: { "accept-encoding": "gzip" } });
+		assert.equal(full.headers.get("content-encoding"), null);
+		assert.deepEqual(Buffer.from(await full.arrayBuffer()), bytes);
+		for (const [range, start, end] of [
+			["bytes=0-3", 0, 3],
+			["bytes=-8", bytes.length - 8, bytes.length - 1],
+			["bytes=8-", 8, bytes.length - 1],
+			["bytes=0-9999", 0, bytes.length - 1],
+		]) {
+			const response = await fetch(url, { headers: { range } });
+			assert.equal(response.status, 206);
+			assert.equal(
+				response.headers.get("content-range"),
+				`bytes ${start}-${end}/${bytes.length}`,
+			);
+			assert.deepEqual(
+				Buffer.from(await response.arrayBuffer()),
+				bytes.subarray(start, end + 1),
+			);
+		}
+		for (const range of [
+			"bytes=9999-",
+			"bytes=0-1,5-6",
+			"bytes=-0",
+			"bytes=-",
+			"bytes=4-2",
+			"bytes=9007199254740992-",
+			"items=0-3",
+		]) {
+			const response = await fetch(url, { headers: { range } });
+			assert.equal(response.status, 416);
+			assert.equal(
+				response.headers.get("content-range"),
+				`bytes */${bytes.length}`,
+			);
+		}
+		const unchanged = await fetch(url, {
+			headers: { "if-none-match": `W/"${hash}"` },
+		});
+		assert.equal(unchanged.status, 304);
+		assert.equal((await unchanged.arrayBuffer()).byteLength, 0);
+		const changed = await fetch(url, {
+			headers: { range: "bytes=0-3", "if-range": '"old"' },
+		});
+		assert.equal(changed.status, 200);
+		assert.deepEqual(Buffer.from(await changed.arrayBuffer()), bytes);
+		assert.equal(
+			(
+				await fetch(url, {
+					headers: { range: "bytes=0-3", "if-range": `"${hash}"` },
+				})
+			).status,
+			206,
+		);
+		const preflight = await fetch(url, {
+			method: "OPTIONS",
+			headers: {
+				origin: "https://example.org",
+				"access-control-request-headers": "range",
+			},
+		});
+		assert.equal(preflight.status, 204);
+		assert.match(
+			preflight.headers.get("access-control-allow-headers"),
+			/Range/,
+		);
+		assert.equal(
+			(await fetch(base + "positions/index.json")).headers.get("cache-control"),
+			"no-cache",
+		);
+		assert.match(
+			(await fetch(base + `positions/manifests/${hash}.json`)).headers.get(
+				"cache-control",
+			),
+			/immutable/,
+		);
+		assert.equal(
+			(await fetch(base + "positions/.parquet-staging/staging.duckdb")).status,
+			404,
+		);
+		assert.equal(
+			(await fetch(base + "positions/bus/2026/11/2026-11-02.ndjson.gz")).status,
+			404,
+		);
+	} finally {
+		await runtime.stop();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("HTTP serves assets and exports with honest health and rejects traversal", async () => {
 	const dir = await mkdtemp(path.join(tmpdir(), "tarc-runtime-"));
 	await mkdir(path.join(dir, "web"));
@@ -176,6 +307,52 @@ test("low disk headroom pauses collection and reports unavailable", async () => 
 		await runtime.stop();
 		if (previous === undefined) delete process.env.MIN_DISK_FREE_BYTES;
 		else process.env.MIN_DISK_FREE_BYTES = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("shutdown waits for an active cycle to settle", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-shutdown-"));
+	let enter;
+	const entered = new Promise((resolve) => {
+		enter = resolve;
+	});
+	let release;
+	const pending = new Promise((resolve) => {
+		release = resolve;
+	});
+	let finished = false;
+	const runtime = createRuntime({
+		dataDir: dir,
+		cycle: async () => {
+			enter();
+			await pending;
+			await writeFile(path.join(dir, "cycle-complete"), "complete");
+			finished = true;
+		},
+	});
+	await new Promise((resolve) =>
+		runtime.server.listen(0, "127.0.0.1", resolve),
+	);
+	try {
+		await runtime.start();
+		await entered;
+		let stopped = false;
+		const stop = runtime.stop().then(() => {
+			stopped = true;
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(stopped, false);
+		release();
+		await stop;
+		assert.equal(finished, true);
+		assert.equal(
+			await readFile(path.join(dir, "cycle-complete"), "utf8"),
+			"complete",
+		);
+	} finally {
+		release();
+		await runtime.stop();
 		await rm(dir, { recursive: true, force: true });
 	}
 });
