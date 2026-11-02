@@ -1,0 +1,61 @@
+{
+  "name": "@tarc/insights",
+  "version": "0.0.1",
+  "description": "Independent Louisville TARC bus observations, analytics, incident archives, replay and optional publishing",
+  "dependencies": {
+    "@atproto/api": "^0.30.0",
+    "axios": "^1.15.0",
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^16.4.7",
+    "fs-extra": "^8.1.0",
+    "minimist": "^1.2.3",
+    "protobufjs": "8.8.1",
+    "sharp": "^0.35.5"
+  },
+  "scripts": {
+    "tarc:fetch-gtfs": "node scripts/tarc/fetch-static-gtfs.js",
+    "tarc:build-schedule-index": "node scripts/tarc/build-schedule-index.js",
+    "tarc:build-schedule-stops": "node scripts/tarc/build-schedule-stops.js",
+    "tarc:backfill-alert-stations": "node scripts/tarc/backfill-alert-stations.js",
+    "tarc:observe-buses": "node scripts/tarc/observe-buses.js",
+    "tarc:export-positions": "node bin/tarc/export-positions.js",
+    "tarc:export-positions:dry": "node bin/tarc/export-positions.js --dry-run",
+    "tarc:observe-bus-tripupdates": "node scripts/tarc/observe-bus-tripupdates.js",
+    "tarc:status": "node scripts/tarc/observe-status.js",
+    "tarc:bus-gaps": "node bin/tarc/bus/gaps.js",
+    "tarc:bus-gaps:dry": "node bin/tarc/bus/gaps.js --dry-run",
+    "tarc:bus-ghosts": "node bin/tarc/bus/ghosts.js",
+    "tarc:bus-ghosts:dry": "node bin/tarc/bus/ghosts.js --dry-run",
+    "tarc:bus-cancellation-surge": "node bin/tarc/bus/cancellation-surge.js",
+    "tarc:bus-cancellation-surge:dry": "node bin/tarc/bus/cancellation-surge.js --dry-run",
+    "tarc:bus-speedmap": "node bin/tarc/bus/speedmap.js",
+    "tarc:bus-speedmap:dry": "node bin/tarc/bus/speedmap.js --dry-run",
+    "tarc:bus-crowding-map": "node bin/tarc/bus/crowding-map.js",
+    "tarc:bus-crowding-map:dry": "node bin/tarc/bus/crowding-map.js --dry-run",
+    "tarc:bus-crowding-rollup": "node bin/tarc/bus/crowding-rollup.js",
+    "tarc:bus-crowding-rollup:dry": "node bin/tarc/bus/crowding-rollup.js --dry-run",
+    "tarc:export-web": "node bin/tarc/export-web.js",
+    "test": "node --test test/*.test.js test/**/*.test.js",
+    "smoke": "node scripts/runtime/smoke.js",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write .",
+    "knip": "knip --include files,dependencies",
+    "prepare": "husky",
+    "gtfs": "node scripts/runtime/gtfs.js",
+    "observe": "node scripts/runtime/observe.js",
+    "detect": "node scripts/runtime/detect.js",
+    "export": "node scripts/runtime/export.js"
+  },
+  "lint-staged": {
+    "*.{js,json}": "biome check --write --no-errors-on-unmatched"
+  },
+  "author": "Cailin Pitt <cailinpitt1@gmail.com> (https://cailinpitt.com)",
+  "license": "ISC",
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.13",
+    "husky": "^9.1.7",
+    "knip": "^6.16.1",
+    "lint-staged": "^16.4.0"
+  }
+}

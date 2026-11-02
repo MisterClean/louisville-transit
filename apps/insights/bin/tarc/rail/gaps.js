@@ -1,0 +1,248 @@
+#!/usr/bin/env node
+require('../../../src/shared/env');
+
+const Path = require('node:path');
+const argv = require('minimist')(process.argv.slice(2));
+
+const { loadGtfs } = require('../../../src/tarc/gtfs');
+const { loadShapes } = require('../../../src/tarc/bus/shapes');
+const { buildLineGeometry } = require('../../../src/tarc/rail/lines');
+const { buildLineTermini, terminusFor } = require('../../../src/tarc/rail/termini');
+const {
+  railGapsFromObservations,
+  RATIO_THRESHOLD,
+  ABSOLUTE_MIN_MIN,
+} = require('../../../src/tarc/rail/gaps');
+const storage = require('../../../src/tarc/storage');
+const incidents = require('../../../src/tarc/shared/incidents');
+const { isOnCooldown } = require('../../../src/tarc/shared/state');
+const { commitAndPost } = require('../../../src/tarc/shared/postDetection');
+const {
+  loginTrain,
+  postWithImage,
+  postWithVideo,
+  postText,
+} = require('../../../src/tarc/shared/bluesky');
+const { setup, writeDryRunAsset, runBin } = require('../../../src/tarc/shared/runBin');
+const { renderRailGapMap } = require('../../../src/tarc/map/railIncidents');
+const {
+  lineTitle,
+  directionLabel,
+  buildGapPostText,
+  buildGapAltText,
+  buildGapVideoPostText,
+  buildGapVideoAltText,
+} = require('../../../src/tarc/rail/post');
+const { railDeviationsByTrain } = require('../../../src/tarc/rail/adherence');
+const { VIDEO_WINDOW_MS, captureRailGapHistoryVideo } = require('../../../src/tarc/rail/video');
+const { stationsOnLine, gapStationContext } = require('../../../src/tarc/rail/stations');
+
+const GTFS_DIR = (process.env.TARC_GTFS_DIR || Path.join(__dirname, '..', '..', '..', 'data', 'tarc', 'gtfs'));
+const WINDOW_MS = 3 * 60 * 1000;
+const RAIL_GAP_DAILY_CAP = 3;
+
+function recordSuppressed(gap, suppressed) {
+  incidents.recordGap({
+    kind: 'rail',
+    route: gap.line,
+    direction: gap.direction,
+    gapFt: gap.gapFt,
+    gapMin: gap.gapMin,
+    expectedMin: gap.expectedMin,
+    ratio: gap.ratio,
+    nearStop: null,
+    posted: false,
+  });
+  incidents.recordMetaSignal({
+    kind: 'rail',
+    line: gap.line,
+    direction: gap.direction || null,
+    source: 'gap',
+    severity: Math.min(1, gap.ratio / 4),
+    detail: { ratio: gap.ratio, gapMin: gap.gapMin, suppressed },
+    posted: false,
+  });
+}
+
+async function main() {
+  setup();
+  const gtfs = loadGtfs(GTFS_DIR);
+  const shapes = loadShapes(GTFS_DIR);
+  const lineGeom = buildLineGeometry(gtfs, shapes);
+  const termini = buildLineTermini(gtfs);
+  const now = Date.now();
+  const rows = storage.getRecentRailObservationsAll(now - WINDOW_MS);
+  if (rows.length === 0) {
+    console.log('No recent rail observations in the window - is observe-rail running?');
+    return;
+  }
+
+  const gaps = railGapsFromObservations(rows, { lineGeom, now });
+  if (!argv['dry-run']) {
+    const closed = incidents.reconcileGapEvents({
+      kind: 'rail',
+      current: gaps.map((g) => ({ route: g.line, direction: g.direction })),
+      now,
+    });
+    if (closed.length > 0) {
+      console.log(`Resolved ${closed.length} open rail gap event(s)`);
+    }
+  }
+  if (gaps.length === 0) {
+    console.log('No significant rail gaps detected');
+    return;
+  }
+  console.log(`Found ${gaps.length} candidate rail gap(s)`);
+
+  let gap = null;
+  let cooldownOverridden = false;
+  for (const candidate of gaps) {
+    if (!argv['dry-run']) {
+      const lineKey = `rail:gap:${candidate.line}`;
+      const dirKey = `rail:gap:${candidate.line}:${candidate.direction}`;
+      const cd = isOnCooldown(lineKey) || isOnCooldown(dirKey);
+      const cooldownAllows = incidents.gapCooldownAllows({
+        kind: 'rail',
+        route: candidate.line,
+        candidate: { ratio: candidate.ratio },
+      });
+      if (cd && !cooldownAllows) {
+        console.log(`  skip ${candidate.line}/${candidate.direction}: on cooldown`);
+        recordSuppressed(candidate, 'cooldown');
+        continue;
+      }
+      if (cd && cooldownAllows) {
+        console.log(`  override cooldown for ${candidate.line}/${candidate.direction}: worse gap`);
+        cooldownOverridden = true;
+      }
+      const capAllows = incidents.gapCapAllows({
+        kind: 'rail',
+        route: candidate.line,
+        candidate: { ratio: candidate.ratio },
+        cap: RAIL_GAP_DAILY_CAP,
+      });
+      if (!capAllows) {
+        console.log(`  skip ${candidate.line}/${candidate.direction}: line at daily cap`);
+        recordSuppressed(candidate, 'cap');
+        continue;
+      }
+    }
+    gap = candidate;
+    break;
+  }
+
+  if (!gap) {
+    console.log('All candidates filtered (cooldown/cap), nothing to post');
+    return;
+  }
+  if (gap.gapMin < ABSOLUTE_MIN_MIN || gap.ratio < RATIO_THRESHOLD) return;
+
+  gap.terminus = terminusFor(termini, gap.line, gap.direction);
+  const line = lineGeom.get(gap.line);
+  // Flank + midpoint stations for the gap stretch — names the post's "between X
+  // and Y", labels the still map's flanks, and aims the timelapse's wait stop.
+  Object.assign(gap, gapStationContext(stationsOnLine(line, gap.line), gap));
+  const callouts = incidents.gapCallouts({
+    kind: 'rail',
+    route: gap.line,
+    routeLabel: lineTitle(gap.line),
+    ratio: gap.ratio,
+  });
+  let image;
+  try {
+    image = await renderRailGapMap(gap, line, {
+      title: `${lineTitle(gap.line)}${gap.direction ? ` - ${directionLabel(gap.direction, gap.terminus)}` : ''}`,
+    });
+  } catch (e) {
+    console.warn(`Map render failed (${e.message}); will post text-only`);
+    image = null;
+  }
+  const deviations = railDeviationsByTrain(rows);
+  const text = buildGapPostText(gap, callouts, {
+    leadingDev: deviations.get(gap.leading?.trainId),
+    trailingDev: deviations.get(gap.trailing?.trainId),
+  });
+  const alt = buildGapAltText(gap);
+
+  if (argv['dry-run']) {
+    const out = image
+      ? writeDryRunAsset(image, `rail-gap-${gap.line}-${gap.direction}-${Date.now()}.jpg`)
+      : '(render failed - text only)';
+    console.log(`\n--- DRY RUN ---\n${text}\n\nAlt: ${alt}\nImage: ${out}`);
+    if (argv.video) {
+      console.log('\nBuilding rail gap timelapse from recent observations...');
+      const videoRows = storage.getRecentRailObservationsAll(Date.now() - VIDEO_WINDOW_MS);
+      const video = await captureRailGapHistoryVideo(gap, line, videoRows, { lineGeom });
+      if (!video) {
+        console.log('Rail gap timelapse skipped (<2 frames in window)');
+      } else {
+        const videoPath = writeDryRunAsset(
+          video.buffer,
+          `rail-gap-${gap.line}-${gap.direction}-${Date.now()}.mp4`,
+        );
+        console.log(`Video: ${videoPath}\n${buildGapVideoPostText(video, gap)}`);
+      }
+    }
+    return;
+  }
+
+  const baseEvent = {
+    kind: 'rail',
+    route: gap.line,
+    direction: gap.direction,
+    gapFt: gap.gapFt,
+    gapMin: gap.gapMin,
+    expectedMin: gap.expectedMin,
+    ratio: gap.ratio,
+    nearStop: null,
+  };
+  const posted = await commitAndPost({
+    cooldownKeys: [`rail:gap:${gap.line}`, `rail:gap:${gap.line}:${gap.direction}`],
+    forceClearCooldown: cooldownOverridden,
+    recordSkip: () => incidents.recordGap({ ...baseEvent, posted: false }),
+    agentLogin: loginTrain,
+    image,
+    text,
+    alt,
+    recordPosted: (primary) => {
+      incidents.recordGap({ ...baseEvent, posted: true, postUri: primary.uri });
+      incidents.recordMetaSignal({
+        kind: 'rail',
+        line: gap.line,
+        direction: gap.direction || null,
+        source: 'gap',
+        severity: Math.min(1, gap.ratio / 4),
+        detail: { ratio: gap.ratio, gapMin: gap.gapMin },
+        posted: true,
+      });
+    },
+    postWithImage,
+    postText,
+  });
+  if (posted?.primary?.uri) {
+    try {
+      const videoRows = storage.getRecentRailObservationsAll(Date.now() - VIDEO_WINDOW_MS);
+      const video = await captureRailGapHistoryVideo(gap, line, videoRows, { lineGeom });
+      if (!video) {
+        console.log('Rail gap timelapse history produced <2 frames, skipping reply');
+        return;
+      }
+      const replyRef = {
+        root: { uri: posted.primary.uri, cid: posted.primary.cid },
+        parent: { uri: posted.primary.uri, cid: posted.primary.cid },
+      };
+      const reply = await postWithVideo(
+        posted.agent,
+        buildGapVideoPostText(video, gap),
+        video.buffer,
+        buildGapVideoAltText(gap, video),
+        replyRef,
+      );
+      console.log(`Timelapse reply: ${reply.url}`);
+    } catch (e) {
+      console.warn(`Rail gap timelapse reply failed: ${e.message}`);
+    }
+  }
+}
+
+runBin(main);

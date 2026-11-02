@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+require('../../../src/shared/env');
+
+const Path = require('node:path');
+const argv = require('minimist')(process.argv.slice(2));
+
+const { loadGtfs } = require('../../../src/tarc/gtfs');
+const { loadShapes } = require('../../../src/tarc/bus/shapes');
+const { buildLineGeometry } = require('../../../src/tarc/rail/lines');
+const { captureRailSystemTimelapse } = require('../../../src/tarc/rail/snapshotVideo');
+const storage = require('../../../src/tarc/storage');
+const { loginTrain, postWithVideo } = require('../../../src/tarc/shared/bluesky');
+const { setup, writeDryRunAsset, runBin } = require('../../../src/tarc/shared/runBin');
+const { buildTimelapsePostText, buildTimelapseAltText } = require('../../../src/tarc/rail/post');
+
+const GTFS_DIR = (process.env.TARC_GTFS_DIR || Path.join(__dirname, '..', '..', '..', 'data', 'tarc', 'gtfs'));
+const DEFAULT_WINDOW_MIN = 60;
+
+async function main() {
+  setup();
+  const gtfs = loadGtfs(GTFS_DIR);
+  const shapes = loadShapes(GTFS_DIR);
+  const lineGeom = buildLineGeometry(gtfs, shapes);
+
+  const windowMin = argv['window-min'] ? parseInt(argv['window-min'], 10) : DEFAULT_WINDOW_MIN;
+  const interpolate = argv.interpolate ? parseInt(argv.interpolate, 10) : undefined;
+  const now = Date.now();
+  const rows = storage.getRecentRailObservationsAll(now - windowMin * 60 * 1000);
+  if (rows.length === 0) {
+    console.log('No recent rail observations in the window - is observe-rail running?');
+    return;
+  }
+
+  const result = await captureRailSystemTimelapse(rows, lineGeom, { interpolate, windowMin });
+  if (!result) {
+    console.log('System timelapse produced <2 frames, nothing to post');
+    return;
+  }
+  const text = buildTimelapsePostText(result);
+  const alt = buildTimelapseAltText(result);
+  console.log(
+    `Captured ${result.frameCount} frames over ${result.elapsedSec}s ` +
+      `(${(result.buffer.length / 1024 / 1024).toFixed(1)} MB)`,
+  );
+
+  if (argv['dry-run']) {
+    const out = writeDryRunAsset(result.buffer, `rail-timelapse-${Date.now()}.mp4`);
+    console.log(`\n--- DRY RUN ---\n${text}\n\nAlt: ${alt}\nVideo: ${out}`);
+    return;
+  }
+
+  const agent = await loginTrain();
+  const post = await postWithVideo(agent, text, result.buffer, alt);
+  console.log(`Posted: ${post.url}`);
+}
+
+runBin(main);

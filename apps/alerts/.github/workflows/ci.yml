@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test -- --run
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+  # Smoke-build the site on every PR. `npm test`/`npm run lint` never exercise
+  # `npm run build`, so a crash in the postbuild scripts (prerender-events,
+  # prerender-pages, generate-feed, generate-sitemap, generate-csv) used to slip
+  # through the gate and only surface in deploy.yml after merge — which can
+  # freeze the live site. This mirrors deploy.yml's build: prebuild fetches
+  # current data from the R2 origin into public/data, Vite copies it into
+  # dist/data, then postbuild runs every script against it, so any crash fails
+  # the PR instead of production.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Read-only restore of deploy.yml's OG render cache so PR builds reuse
+      # already-rendered event/page PNGs instead of re-rendering all of them
+      # cold. A miss just means a slower build, never a failure.
+      - name: Restore OG image cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .og-cache
+            .og-cache-pages
+          key: og-cache-pr-${{ github.run_id }}
+          restore-keys: |
+            og-cache-
+
+      - run: npm run build
+        env:
+          SKIP_OG_RENDER: '1'

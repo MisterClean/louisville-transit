@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Off-box backup of the TARC history DB to Cloudflare R2.
+#
+# Uses SQLite's online `.backup` so the snapshot is WAL-safe while cron writers
+# are active. The position tables are dropped from the snapshot (positions are
+# archived separately by bin/tarc/export-positions.js, see docs/POSITIONS.md),
+# then it is integrity-checked, gzipped, uploaded to R2, and a small number of
+# local temp copies are retained for fast restores.
+#
+# Env overrides:
+#   TARC_HISTORY_DB_PATH  SQLite DB to back up
+#                          (default: state/tarc.sqlite)
+#   RCLONE_REMOTE          rclone remote:bucket target
+#                          (default: r2louisville-db:louisville-transit-insights-db-backups)
+#   KEEP_LOCAL             local snapshots to retain (default: 2)
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DB="${TARC_HISTORY_DB_PATH:-$REPO_DIR/state/tarc.sqlite}"
+WORKDIR="$REPO_DIR/tmp/tarc-db-backups"
+REMOTE="${RCLONE_REMOTE:-r2louisville-db:louisville-transit-insights-db-backups}"
+KEEP_LOCAL="${KEEP_LOCAL:-2}"
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="tarc-${STAMP}.sqlite"
+
+if [ ! -f "$DB" ]; then
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ERROR: DB not found at $DB" >&2
+  exit 1
+fi
+
+mkdir -p "$WORKDIR"
+# Don't leave a multi-GB uncompressed snapshot behind if a step fails.
+trap 'rm -f "${WORKDIR:?}/${OUT}"' ERR
+
+sqlite3 "$DB" ".backup '${WORKDIR}/${OUT}'"
+
+# Drop vehicle positions from the snapshot only. The live DB is untouched, and
+# storage.js recreates the empty tables on a restored copy.
+sqlite3 "${WORKDIR}/${OUT}" \
+  'DROP TABLE IF EXISTS bus_observations; DROP TABLE IF EXISTS rail_observations; DROP TABLE IF EXISTS streetcar_observations; VACUUM;'
+
+if ! sqlite3 "${WORKDIR}/${OUT}" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ERROR: integrity_check failed for ${OUT}" >&2
+  rm -f "${WORKDIR:?}/${OUT}"
+  exit 1
+fi
+
+gzip -f "${WORKDIR}/${OUT}"
+
+rclone copy "${WORKDIR}/${OUT}.gz" "${REMOTE}/" --s3-no-check-bucket
+
+ls -1t "${WORKDIR}"/tarc-*.sqlite.gz 2>/dev/null \
+  | tail -n +"$((KEEP_LOCAL + 1))" \
+  | xargs -r rm -f
+
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') backup ok: ${OUT}.gz -> ${REMOTE}"

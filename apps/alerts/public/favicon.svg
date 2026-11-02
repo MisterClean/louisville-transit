@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#0d1117"/>
+  <!-- Red row -->
+  <rect x="5"  y="4"  width="4" height="4" rx="1" fill="#ce242b" opacity="0.9"/>
+  <rect x="11" y="4"  width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="17" y="4"  width="4" height="4" rx="1" fill="#ce242b" opacity="0.5"/>
+  <rect x="23" y="4"  width="4" height="4" rx="1" fill="#30363d"/>
+  <!-- Gold row -->
+  <rect x="5"  y="11" width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="11" y="11" width="4" height="4" rx="1" fill="#d4a723" opacity="0.7"/>
+  <rect x="17" y="11" width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="23" y="11" width="4" height="4" rx="1" fill="#d4a723" opacity="0.45"/>
+  <!-- Blue row -->
+  <rect x="5"  y="18" width="4" height="4" rx="1" fill="#0075b2" opacity="0.55"/>
+  <rect x="11" y="18" width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="17" y="18" width="4" height="4" rx="1" fill="#0075b2" opacity="0.9"/>
+  <rect x="23" y="18" width="4" height="4" rx="1" fill="#30363d"/>
+  <!-- Green row -->
+  <rect x="5"  y="25" width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="11" y="25" width="4" height="4" rx="1" fill="#009d4b" opacity="0.5"/>
+  <rect x="17" y="25" width="4" height="4" rx="1" fill="#30363d"/>
+  <rect x="23" y="25" width="4" height="4" rx="1" fill="#009d4b" opacity="0.75"/>
+</svg>

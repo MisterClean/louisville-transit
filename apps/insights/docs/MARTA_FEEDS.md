@@ -1,0 +1,155 @@
+> Historical upstream Atlanta/MARTA implementation reference. This document does not describe Louisville production feeds or modes. See the current ../README.md for TARC operations.
+
+# MARTA feeds — validated reality
+
+What the MARTA data feeds actually contain, verified against captured fixtures
+(`test/marta/fixtures/`) rather than the developer docs. This is the ground
+truth the detector port reasons about; update it when a capture surprises us.
+
+Capture tooling:
+
+- `scripts/marta/fetch-static-gtfs.js` — static GTFS → `data/marta/gtfs/`
+- `scripts/marta/capture-bus-vp.js` — bus VehiclePositions snapshot
+- `scripts/marta/capture-bus-tu.js` — bus TripUpdates snapshot
+- `scripts/marta/build-bus-fixtures.js` — trim captures into committed fixtures
+
+Adapters: `src/marta/bus/api.js` (GTFS-rt) and `src/marta/gtfs.js` (static + the join).
+
+## Static GTFS — `itsmarta.com/google_transit_feed/google_transit.zip`
+
+Public, unauthenticated, ~20 MB. **86 routes**: 81 bus (`route_type=3`),
+4 rail (`route_type=1`), 1 streetcar (`route_type=0`). ~52k trips, ~7k stops.
+
+Rail lines and brand colors (from `routes.txt`):
+
+| route_id | line  | color   |
+|----------|-------|---------|
+| 26987    | RED   | CE242B  |
+| 26985    | GOLD  | D4A723  |
+| 26984    | BLUE  | 0075B2  |
+| 26986    | GREEN | 009D4B  |
+| 26982    | Atlanta Streetcar | FF00FF |
+
+Stations: 44 parent stations (`location_type=1`), 214 child platforms
+(`parent_station` set). Use parent↔child for station/platform pages.
+
+## Bus GTFS-realtime — `gtfs-rt.itsmarta.com/TMGTFSRealTimeWebService/…`
+
+Standard GTFS-rt v2.0 protobuf, public, **no API key**. `FULL_DATASET` each
+poll. Two endpoints: `vehicle/vehiclepositions.pb`, `tripupdate/tripupdates.pb`.
+
+### The realtime → static join
+
+The single most important fact: **the realtime feed reports the *public* route
+number in `trip.routeId`** (e.g. `"20"`), **not** the internal GTFS `route_id`
+(e.g. `26915`). The stable shared key is `trip_id`. Canonical route:
+
+```
+realtime entity ──trip_id──▶ trips.txt ──route_id──▶ routes.txt
+```
+
+`gtfs.resolveRoute({ tripId, realtimeRouteId })` does this, falling back to
+`route_short_name` only when a trip is missing from a stale static feed. The
+realtime public number happens to equal `route_short_name`, which the join
+asserts as a drift check (`shortNameMatches`).
+
+### VehiclePositions
+
+One entity per active vehicle (~180 observed midday).
+
+| field | notes |
+|-------|-------|
+| `trip.tripId` | join key |
+| `trip.routeId` | **public route number**, not `route_id` |
+| `trip.directionId` | **UNRELIABLE** — observed values 0, 5, 9, 11, 14. Ignore it; take `direction_id` from `trips.txt`. |
+| `position.lat/lon` | always present |
+| `position.bearing` | integer degrees clockwise from true north. MARTA omits zero-valued fields, so `0` never appears; a missing bearing usually means heading north (0°). |
+| `position.speed` | metres/second, quantized to ~5 mph steps. **Missing on ~44% of rows**: MARTA omits zero-valued fields, so `0` never appears and a missing speed mostly means stopped (~0), not unknown. Some vehicles report implausible values (e.g. vehicle 4756 at a constant 35.76 m/s); treat anything above ~31 m/s (~70 mph) as suspect. Detectors must tolerate `null`. |
+| `vehicle.id` / `.label` | two separate identifiers; `label` is not derived from `id` (e.g. id `2303` has label `1603`). Stored as `vehicle_id` / `label`. |
+| `occupancyStatus` | usually present |
+| `vehicle.timestamp` | epoch seconds, stored as-is in `vehicle_ts`. Usually lags our poll time (median ~23s, p99 ~400s, up to ~25 min); around the fall-back DST change it has run up to ~1h *ahead* of poll time. |
+
+`parseVehiclePosition` deliberately **omits** `directionId` so nothing
+downstream is tempted to trust it. It distinguishes on-wire `speed`/`bearing`
+from protobufjs prototype defaults via own-property checks.
+
+### TripUpdates
+
+One entity per active trip (~365 observed midday), with predicted **and**
+scheduled stop times.
+
+- `trip.{tripId, routeId, startTime, startDate}` — `directionId` present here but
+  same caveat as above.
+- `stopTimeUpdate[]`: `stopSequence`, `stopId`, `arrival`/`departure`
+  `{ time, scheduledTime }`.
+- MARTA does **not** populate GTFS-rt `delay`. Schedule adherence is therefore
+  `arrival.time − arrival.scheduledTime` (positive = late), exposed as
+  `scheduleDeviationSec`.
+
+## Rail realtime — `developerservices.itsmarta.com/mcsmrail/…/traindata`
+
+Needs `MARTA_TRAIN_KEY` (`apiKey` query param). Returns a flat JSON array, one
+row per **(train → upcoming station)** arrival prediction. Adapter:
+`src/marta/rail/api.js`. Capture: `scripts/marta/capture-rail.js`.
+
+**Feasibility gate result: PATH A — confirmed with TRUE positions.** The plan
+feared station-arrival predictions with no identity or position. Reality is much
+stronger. Two row kinds, split by `IS_REALTIME`:
+
+| | `IS_REALTIME="true"` (tracked) | `IS_REALTIME="false"` (scheduled) |
+|---|---|---|
+| `TRAIN_ID` | real, e.g. `"402"` | **empty** |
+| `LATITUDE`/`LONGITUDE` | **real train position** | **absent** |
+| `DELAY` | signed `T<sec>S` (`T-21S`=21s early, `T0S`=on time, `T249S`=249s late); stored as `delay_sec`, positive = late. Missing on ~2–4% of tracked rows. | absent |
+| meaning | a train being tracked live | a future scheduled arrival |
+
+Observed midday: ~330 tracked rows / ~340 scheduled rows, ~43 distinct trains.
+
+What makes Path A work (verified against two snapshots 150s apart):
+
+- **Identity is stable.** 41/43 `TRAIN_ID`s persisted across the gap; the 2 that
+  dropped reached a terminal, 2 new ones were dispatched.
+- **Positions are real and move.** All rows for one train share one lat/lon (it's
+  the *train's* position, not the station's). Between snapshots, 31 trains moved
+  0.4–1.8 mi (≈ plausible inter-station speeds) — so **speed is computable from
+  position deltas**, enabling true rail speedmaps, not just headway maps.
+- **Identity key is `(LINE, DIRECTION, TRAIN_ID)`** — `TRAIN_ID` alone (e.g.
+  `401`/`402`) is reused across lines and directions, even within one poll.
+
+Directions: `N`/`S` (Red, Gold), `E`/`W` (Blue, Green). `EVENT_TIME` is each
+train's last-update wall clock in **America/New_York**, with no offset.
+`zonedToEpoch` converts it with `Intl` (no tz library): the repeated fall-back
+hour resolves to the instant closest to our poll time, and a nonexistent
+spring-forward time uses the pre-transition offset. Before this fix, 2026-11-01
+event times from ~06:00Z to 11:00Z were stored 1h early (403 `rail_observations`
+and 27,256 `rail_arrivals` rows, since corrected in place). `WAITING_SECONDS` is the authoritative
+seconds-to-arrival; `NEXT_ARR` is a redundant local clock string.
+
+Implication: rail can target near-full CTA parity — true speedmaps, gaps,
+bunches, and ghosts (scheduled rows with no materializing train) — rather than
+the plan's honest-fallback "delay/headway map."
+
+## Official alerts — `gtfs-rt.itsmarta.com/…/alert/alerts.pb`
+
+**No scraper needed.** Despite the plan's worry about "no documented stable
+official-alert API," MARTA publishes alerts as a standard **GTFS-rt v2.0
+ServiceAlerts** protobuf at the same host as the bus feeds, public and
+unauthenticated. Adapter: `src/marta/alert/api.js`; capture:
+`scripts/marta/capture-alerts.js`.
+
+- `FULL_DATASET` each poll → an alert vanishing from the feed = cleared.
+- Each entity: stable `id`, `cause`, `effect`, `informedEntity[]`
+  (route/stop/trip/agency), header/description/url `TranslatedString`s,
+  `activePeriod[]`. Parsed by `parseAlert` (mirrors the Metra alert parser).
+- The feed was **empty at first discovery** (no active alerts), so:
+  - `test/marta/fixtures/service-alerts-empty.pb` is a real empty capture.
+  - `test/marta/fixtures/service-alerts-synthetic.pb` is **synthetic** (we encode
+    it) to exercise the parser — replace with a trimmed real capture once one is
+    caught.
+  - **Open question:** whether `informedEntity.routeId` is the public route
+    number (like the bus realtime feed) or the internal GTFS `route_id`, and the
+    form of rail line ids. Resolve when a real alert is captured.
+
+## Not yet validated
+
+- `informedEntity.routeId` form in official alerts (needs a live alert).

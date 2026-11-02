@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Skip-to-main-content link: the first focusable element, visually hidden
+   until it receives keyboard focus, then pinned to the top-left so a keyboard
+   user can jump past the header straight into the page's <main>. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background-color: #2563eb;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transform: translateY(-150%);
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+/* The <main> skip target takes focus programmatically; suppress the focus
+   ring on the region itself (the scroll + skip-link already signal the jump). */
+main:focus {
+  outline: none;
+}
+
+/* Smooth cross-document transitions between the site's full-page navigations.
+   Progressive enhancement: ignored where unsupported, and the UA skips the
+   default cross-fade under prefers-reduced-motion. */
+@view-transition {
+  navigation: auto;
+}
+
+/* iOS rubber-band overscroll exposes the <html> background. Without these
+   the dark-mode page shows a white strip when you pull past the top/bottom.
+   `scrollbar-gutter: stable` reserves the scrollbar's space so content doesn't
+   shift horizontally when a scrollbar appears/disappears (CLS). */
+html {
+  background-color: #f8fafc;
+  scrollbar-gutter: stable;
+} /* slate-50 */
+
+/* Skip rendering offscreen incident rows until they scroll near the viewport.
+   `contain-intrinsic-size: auto <h>` remembers each row's real height after its
+   first render, so the placeholder estimate only applies before that. */
+.cv-auto-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+/* `content-visibility: auto` also applies paint containment, which clips
+   anything that overflows the row box and traps descendant z-index inside it.
+   A row's Sources popover is positioned `absolute` and intentionally overflows
+   below the row — under containment it gets cut off and paints behind the next
+   row instead of floating above it. Drop containment while the row's
+   disclosure is open (the row is on-screen and being interacted with anyway,
+   so the offscreen-skipping optimization isn't needed here). */
+.cv-auto-row:has(details[open]) {
+  content-visibility: visible;
+}
+html.dark {
+  background-color: #0d1117;
+} /* gh-canvas */
+
+/* CSS variables for inline-styled timeline cells so they adapt to dark mode */
+:root {
+  --timeline-empty: #f1f5f9;
+  --no-data-stripe1: #e2e8f0;
+  --no-data-stripe2: #f8fafc;
+}
+.dark {
+  --timeline-empty: #21262d;
+  --no-data-stripe1: #161b22;
+  --no-data-stripe2: #0d1117;
+}
+
+/* Respect the OS-level "reduce motion" preference. The pulsing active-alert
+   dot, new-incident fade-in highlight, and skeleton-loader pulse are all
+   decorative — disable them when the user has asked for less motion rather
+   than letting them flicker through unconditionally. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-ping,
+  .animate-pulse,
+  .animate-fade-highlight {
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override Tailwind's animation utilities, which carry equal specificity */
+    animation: none !important;
+  }
+}

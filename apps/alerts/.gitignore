@@ -1,0 +1,14 @@
+.DS_Store
+*.log
+node_modules/
+dist/
+.og-cache/
+.og-cache-pages/
+cron/*.log
+.claude/
+plan.md
+research.md
+tmp/
+public/data/alerts.json
+public/data/daily-counts.json
+.aider*

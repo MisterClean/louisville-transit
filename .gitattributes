@@ -1,0 +1,2 @@
+apps/insights/vendor/** -whitespace
+apps/insights/test/tarc/fixtures/gtfs/** -whitespace

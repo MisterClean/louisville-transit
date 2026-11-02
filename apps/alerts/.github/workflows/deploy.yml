@@ -1,0 +1,150 @@
+name: Deploy to GitHub Pages
+
+on:
+  # Real code changes — run the full gate (tests + lint) before deploying.
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.*'
+      - 'tailwind.config.*'
+      - '.github/workflows/deploy.yml'
+  # Data refreshes. The high-churn data files live in R2, not the repo, so a
+  # data change no longer creates a commit. The server fires `data-updated`
+  # right after a new incident (mirrors the old event-driven web push), and the
+  # schedule below is the catch-up net for any missed dispatch (mirrors the old
+  # ~7-min cron). Both rebuild only to refresh prerendered OG cards / CSV / feed
+  # — they fetch fresh data from R2 at build time and skip tests/lint, since the
+  # code was already gated when it landed on main.
+  repository_dispatch:
+    types: [data-updated]
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  should-deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          runs_json="$(gh api "repos/$REPO/actions/workflows/deploy.yml/runs?event=push&branch=main&per_page=20")"
+          recent_push_id="$(
+            printf '%s' "$runs_json" \
+              | jq -r --arg sha "$SHA" '
+                  now as $now
+                  | .workflow_runs[]
+                  | select(.head_sha == $sha)
+                  | select(($now - (.created_at | fromdateiso8601)) < 1800)
+                  | .id
+                ' \
+              | head -n 1
+          )"
+
+          if [ -n "$recent_push_id" ]; then
+            echo "Skipping $EVENT_NAME rebuild: push run $recent_push_id already handled SHA $SHA in the last 30 minutes."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: should-deploy
+    if: needs.should-deploy.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Gate only real code changes. Data-driven rebuilds (repository_dispatch /
+      # schedule / manual) re-run already-green code with fresh data, so the
+      # tests/lint would just be wasted minutes — same reasoning as the old
+      # data-only-push skip, but keyed on the trigger instead of a git diff.
+      - if: github.event_name == 'push'
+        run: npm test -- --run
+
+      - if: github.event_name == 'push'
+        run: npm run lint
+
+      - run: sudo apt-get install -y fonts-inter
+
+      - name: Use runner Chrome for Playwright rendering
+        run: |
+          test -x /usr/bin/google-chrome-stable
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/google-chrome-stable" >> "$GITHUB_ENV"
+
+      - name: Restore OG image cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .og-cache
+            .og-cache-pages
+          key: og-cache-${{ github.run_id }}
+          restore-keys: |
+            og-cache-
+
+      # `prebuild` (scripts/fetch-data.js) pulls alerts.json + daily-counts.json
+      # from R2 into public/data/ first, so the snapshot + postbuild steps have
+      # current data. The *client* always fetches those files live from R2 at
+      # runtime (default origin baked into src/lib/dataSource.js), so the live
+      # app is always fresh, independent of when the site was built.
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+          # Ship dotfiles so /.well-known/ (security.txt, api-catalog) deploys;
+          # the action excludes hidden paths by default.
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: Notify WebSub hub
+        run: |
+          curl -fsS -X POST https://pubsubhubbub.superfeedr.com/ \
+            -d hub.mode=publish \
+            -d hub.url=https://atlantatransitalerts.app/feed.xml

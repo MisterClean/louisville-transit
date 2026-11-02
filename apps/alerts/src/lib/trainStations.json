@@ -1,0 +1,302 @@
+[
+  {
+    "name": "AIRPORT Station",
+    "lat": 33.640621,
+    "lon": -84.446202,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "ARTS CENTER Station",
+    "lat": 33.789151,
+    "lon": -84.387139,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "ASHBY Station",
+    "lat": 33.756385,
+    "lon": -84.417382,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "AUBURN AVE @ PIEDMONT AVE",
+    "lat": 33.755522,
+    "lon": -84.382019,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "AVONDALE Station",
+    "lat": 33.775468,
+    "lon": -84.281938,
+    "lines": ["blue"]
+  },
+  {
+    "name": "BANKHEAD Station",
+    "lat": 33.772449,
+    "lon": -84.428863,
+    "lines": ["green"]
+  },
+  {
+    "name": "BROOKHAVEN-OGLETHORPE Station",
+    "lat": 33.860021,
+    "lon": -84.339295,
+    "lines": ["gold"]
+  },
+  {
+    "name": "BUCKHEAD Station",
+    "lat": 33.847699,
+    "lon": -84.367607,
+    "lines": ["red"]
+  },
+  {
+    "name": "CARNEGIE WAY @ TED TURNER DR",
+    "lat": 33.759567,
+    "lon": -84.389572,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "CENTENNIAL OLYMPIC PARK",
+    "lat": 33.759425,
+    "lon": -84.391975,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "CHAMBLEE Station",
+    "lat": 33.888261,
+    "lon": -84.305461,
+    "lines": ["gold"]
+  },
+  {
+    "name": "CIVIC CENTER Station",
+    "lat": 33.765681,
+    "lon": -84.387342,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "COLLEGE PARK Station",
+    "lat": 33.651203,
+    "lon": -84.448611,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "DECATUR Station",
+    "lat": 33.774778,
+    "lon": -84.295971,
+    "lines": ["blue"]
+  },
+  {
+    "name": "DOBBS PLAZA",
+    "lat": 33.755565,
+    "lon": -84.378785,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "DORAVILLE Station",
+    "lat": 33.902788,
+    "lon": -84.280367,
+    "lines": ["gold"]
+  },
+  {
+    "name": "DUNWOODY Station",
+    "lat": 33.921036,
+    "lon": -84.344289,
+    "lines": ["red"]
+  },
+  {
+    "name": "EAST LAKE Station",
+    "lat": 33.765064,
+    "lon": -84.313091,
+    "lines": ["blue"]
+  },
+  {
+    "name": "EAST POINT Station",
+    "lat": 33.677563,
+    "lon": -84.440386,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "EDGEWOOD AVE @ HILLIARD ST",
+    "lat": 33.754408,
+    "lon": -84.376378,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "EDGEWOOD-CANDLER PARK Station",
+    "lat": 33.76199,
+    "lon": -84.340355,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "FIVE POINTS Station",
+    "lat": 33.754018,
+    "lon": -84.391807,
+    "lines": ["blue", "gold", "green", "red"]
+  },
+  {
+    "name": "GARNETT Station",
+    "lat": 33.748726,
+    "lon": -84.395725,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "GEORGIA STATE Station",
+    "lat": 33.750069,
+    "lon": -84.385919,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "HAMILTON E HOLMES Station",
+    "lat": 33.754325,
+    "lon": -84.469237,
+    "lines": ["blue"]
+  },
+  {
+    "name": "HURT PARK",
+    "lat": 33.754483,
+    "lon": -84.385283,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "INDIAN CREEK Station",
+    "lat": 33.769722,
+    "lon": -84.229286,
+    "lines": ["blue"]
+  },
+  {
+    "name": "INMAN PARK-REYNOLDSTOWN Station",
+    "lat": 33.756798,
+    "lon": -84.352698,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "KENSINGTON Station",
+    "lat": 33.772412,
+    "lon": -84.252009,
+    "lines": ["blue"]
+  },
+  {
+    "name": "KING HISTORIC DISTRICT",
+    "lat": 33.755506,
+    "lon": -84.374961,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "KING MEMORIAL Station",
+    "lat": 33.750017,
+    "lon": -84.375698,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "LAKEWOOD-FT MCPHERSON Station",
+    "lat": 33.700707,
+    "lon": -84.429317,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "LENOX Station",
+    "lat": 33.845114,
+    "lon": -84.358595,
+    "lines": ["gold"]
+  },
+  {
+    "name": "LINDBERGH CENTER Station",
+    "lat": 33.823318,
+    "lon": -84.369565,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "LUCKIE ST @ CONE ST",
+    "lat": 33.758058,
+    "lon": -84.390306,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "MEDICAL CENTER Station",
+    "lat": 33.910699,
+    "lon": -84.351502,
+    "lines": ["red"]
+  },
+  {
+    "name": "MIDTOWN Station",
+    "lat": 33.781136,
+    "lon": -84.386389,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "NORTH AVE Station",
+    "lat": 33.771702,
+    "lon": -84.386926,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "NORTH SPRINGS Station",
+    "lat": 33.945094,
+    "lon": -84.357283,
+    "lines": ["red"]
+  },
+  {
+    "name": "OAKLAND CITY Station",
+    "lat": 33.717248,
+    "lon": -84.425496,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "PARK PLACE",
+    "lat": 33.755036,
+    "lon": -84.388211,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "PEACHTREE CENTER Station",
+    "lat": 33.758064,
+    "lon": -84.387532,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "PEACHTREE CENTER Station",
+    "lat": 33.758652,
+    "lon": -84.387596,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "SANDY SPRINGS Station",
+    "lat": 33.931658,
+    "lon": -84.350996,
+    "lines": ["red"]
+  },
+  {
+    "name": "SEC DISTRICT Station",
+    "lat": 33.757356,
+    "lon": -84.394037,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "SWEET AUBURN MARKET",
+    "lat": 33.754407,
+    "lon": -84.379845,
+    "lines": ["streetcar"]
+  },
+  {
+    "name": "VINE CITY Station",
+    "lat": 33.756599,
+    "lon": -84.403974,
+    "lines": ["blue", "green"]
+  },
+  {
+    "name": "WEST END Station",
+    "lat": 33.736133,
+    "lon": -84.413546,
+    "lines": ["gold", "red"]
+  },
+  {
+    "name": "WEST LAKE Station",
+    "lat": 33.753194,
+    "lon": -84.445292,
+    "lines": ["blue"]
+  },
+  {
+    "name": "WOODRUFF PARK",
+    "lat": 33.756022,
+    "lon": -84.3882,
+    "lines": ["streetcar"]
+  }
+]
