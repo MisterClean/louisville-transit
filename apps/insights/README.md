@@ -22,7 +22,7 @@ Gap minutes are **estimated spacing from observed distance and typical speed**, 
 
 ## Storage and retention
 
-SQLite uses WAL and a shared busy timeout. Positions retain seven days by default (`TRANSIT_POSITION_RETENTION_DAYS`); compact trip status and next-actionable-stop predictions retain one day. Capturing full future stop predictions requires explicit `TARC_STORE_ALL_STOP_PREDICTIONS=true` and substantially more space. Incident history, official alert versions, finalized replay, and delivery receipts persist independently. The monorepo runtime owns capacity checks, media retention, and backups.
+SQLite uses WAL and a shared busy timeout. Positions retain at least seven days by default (`TRANSIT_POSITION_RETENTION_DAYS`), and are pruned only after a verified completed-day Parquet archive is committed. The runtime runs the archive job hourly; [the archive contract](../../docs/positions-archive.md) covers downloads, safe sample exports, recovery, and resource limits. Compact trip status and next-actionable-stop predictions retain one day. Capturing full future stop predictions requires explicit `TARC_STORE_ALL_STOP_PREDICTIONS=true` and substantially more space. Incident history, official alert versions, finalized replay, and delivery receipts persist independently. The monorepo runtime owns capacity checks, media retention, and backups.
 
 ## Verification and provenance
 

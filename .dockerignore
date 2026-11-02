@@ -7,6 +7,9 @@
 **/dist
 **/coverage
 **/*.sqlite*
+**/*.parquet
+**/archive
+apps/insights/web
 **/*.log
 .git
 .DS_Store

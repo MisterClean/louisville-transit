@@ -817,9 +817,7 @@ const ROLLOFF_TABLES = ['bus_trip_status', 'bus_trip_updates', 'rail_arrivals'];
 function rolloffOldObservations(now = Date.now()) {
   const cutoff = now - ROLLOFF_MS;
   const d = getDb();
-  d.prepare('DELETE FROM bus_observations WHERE ts < ?').run(
-    now - Number(process.env.TRANSIT_POSITION_RETENTION_DAYS || 7) * 86400000,
-  );
+  // Position pruning belongs to the verified, committed daily archive job.
   for (const t of ROLLOFF_TABLES) {
     d.prepare(`DELETE FROM ${t} WHERE ts < ?`).run(cutoff);
   }

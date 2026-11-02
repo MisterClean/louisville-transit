@@ -4,6 +4,7 @@
   "description": "Independent Louisville TARC bus observations, analytics, incident archives, replay and optional publishing",
   "dependencies": {
     "@atproto/api": "^0.30.0",
+    "@duckdb/node-api": "2.0.0-r.1",
     "axios": "^1.15.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.7",

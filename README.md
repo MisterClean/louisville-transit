@@ -23,6 +23,7 @@ Configuration uses environment variables. Copy `.env.example` to `.env` and star
 - Live TARC buses, route geometry, incident replay, speed and occupancy observations, predicted delays, and scheduled headways.
 - Bunching, gaps, cross-route clusters, missing-bus observations, low-frequency gaps, route blackouts, explicit canceled trips, and correlated observations, with evidence and freshness gates.
 - Official alerts and their lifecycle, incident and route feeds, CSV export, JSON data, and sitemap generation.
+- Verified daily bus-position Parquet downloads, with immutable manifests and archive-gated SQLite retention. See [the archive contract](docs/positions-archive.md).
 - Map and video rendering, local post previews, and an optional two-account Bluesky publisher. Publishing is disabled by default.
 - One production process supervising sequential jobs, SQLite on persistent storage, health endpoints, bounded raw-data retention, and a backup/verification command.
 
