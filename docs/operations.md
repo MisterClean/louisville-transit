@@ -21,6 +21,18 @@ The standard polling interval is 60 seconds. Static GTFS and schedule indexes re
 
 Local measurement with roughly 67 buses and 199 active trip updates showed about 47 MiB idle web-process RSS and short collector cycles. This excludes transient worker peaks and is not a production bill estimate. Production metrics and billing data are the source for future cost estimates.
 
+## Deploying a reviewed revision
+
+Run CI for the intended Git revision before release. The Docker build installs native modules on Linux, builds the frontend, and removes development dependencies. Keep the attached volume and environment variables when replacing the application image.
+
+If Railway's GitHub integration has access to the repository, connect the chosen branch or pin an exact reviewed commit. Otherwise deploy from a clean checkout with the Railway CLI:
+
+```sh
+railway up --project PROJECT_ID --environment ENVIRONMENT_ID --service SERVICE_ID --detach
+```
+
+Project and service IDs are deployment configuration, not source defaults. A CLI upload does not enable automatic deployment on Git pushes. Verify the specific deployment reaches `SUCCESS`, then check fresh source timestamps and successful collection cycles; the HTTP health check alone is insufficient. Source changes need a new reviewed deployment.
+
 ## Health and failures
 
 `/healthz` checks HTTP liveness. `/api/health` includes job success/failure, last successful cycle and storage. `/data/health.json` reports each feed's source timestamp and feature readiness. A successful HTTP response alone is insufficient to claim collection works.

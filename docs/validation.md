@@ -13,6 +13,16 @@ Reviewed on 2026-11-02 with Node 24.
 - SQLite backup creation and checksum/integrity verification passed. Video encoding was exercised with FFmpeg; no social post was sent.
 - The source tree was scanned for credentials and personal account names, emails, and filesystem paths. Git author metadata is generic; deployment account ownership is not embedded in the application.
 
+## Production smoke check
+
+The runtime revision `80c79165e33782cf7c7f0aa29b52e27f10618238` passed GitHub Actions on Linux and deployed successfully to Railway on 2026-11-02. It was uploaded from the reviewed checkout using the CLI; GitHub integration access was not expanded and automatic deployment on push is not enabled.
+
+At 22:36 UTC, the new instance had completed two collection cycles with zero failures. All three feed timestamps advanced independently: 65 vehicle positions, 195 trip updates, and one official alert were fresh. The archive start remained stable, the coverage ledger gained 60 seconds of observed time, and a real incident replay track was exported.
+
+HTTPS checks passed for liveness, runtime/source health, routes, vehicles, archive data, route/event pages, global/route Atom feeds, CSV, sitemap, canonical URLs, and a PNG sharing card. Route geometry was served compressed. Desktop and mobile production pages were visually inspected.
+
+Railway mounted the persistent volume at `/data`; schedule indexes, SQLite state, and web exports were written there. A deliberate production restart/restore drill was not performed. Initial resource samples showed about 154 MB memory and 93 MB disk use; this brief startup window does not establish steady-state peaks or a monthly cost estimate. The configured limits remain one replica, 1 vCPU, 1 GB memory, and a 1 GB persistent volume.
+
 ## Limits and release gates
 
 These checks do not establish months of operational reliability. History accumulates only while this installation is collecting; completed-day metrics require the documented source coverage threshold.

@@ -49,7 +49,7 @@ npm run lint --workspace apps/insights
 npm run lint --workspace apps/alerts
 ```
 
-See [operations](docs/operations.md), [Bluesky setup](docs/bluesky-setup.md), [upstream comparison](docs/upstream-review.md), and the [open-source release plan](docs/open-source-plan.md).
+See [operations](docs/operations.md), [validation](docs/validation.md), [Bluesky setup](docs/bluesky-setup.md), [upstream comparison](docs/upstream-review.md), and the [open-source release plan](docs/open-source-plan.md).
 
 ## Attribution and licensing
 
