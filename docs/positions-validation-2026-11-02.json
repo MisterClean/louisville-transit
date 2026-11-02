@@ -25,8 +25,8 @@
   "subset_sha256": "52632bd552581852cc7602274944042d1162b2380d2f3a2e609278bed8161ef6",
   "parquet_sha256": "9886bcd31cdad961676d9f22640ffcadb910bc63e2e2549cc13635b6aafa04f9",
   "parquet_bytes": 24361,
-  "gzip_ndjson_bytes": 69735,
-  "reduction_percent": 65.06632250663225,
+  "gzip_ndjson_bytes": 64223,
+  "reduction_percent": 62.06810644161749,
   "reader": "PyArrow 26.0.0",
   "columns": [
     "ts",
@@ -108,5 +108,14 @@
     "Partial-day bounded sample, not a full-day production archive or long-term resource benchmark",
     "Actual sample contains no nulls or identical duplicate rows; these were tested separately with synthetic records",
     "No raw observations or generated Parquet files are committed"
-  ]
+  ],
+  "comparison_method": {
+    "baseline": "legacy export-positions.js NDJSON gzip",
+    "sqlite_order": "ORDER BY ts, rowid (explicit stable tie order)",
+    "record_mapping": "positionsArchive.toRecord(bus,row)",
+    "serialization": "JSON.stringify(record) + newline per row",
+    "gzip_level": 9,
+    "baseline_path": "/tmp/louisville-parquet-validation/legacy-order-level9.ndjson.gz",
+    "note": "Supersedes prior default gzip level6 baseline sorted route/vehicle_id/ts. Parquet and raw SQLite snapshot unchanged."
+  }
 }
