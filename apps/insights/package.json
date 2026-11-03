@@ -54,7 +54,7 @@
   "author": "Cailin Pitt <cailinpitt1@gmail.com> (https://cailinpitt.com)",
   "license": "ISC",
   "devDependencies": {
-    "@biomejs/biome": "^2.4.13",
+    "@biomejs/biome": "^2.6.4",
     "husky": "^9.1.7",
     "knip": "^6.16.1",
     "lint-staged": "^16.4.0"
