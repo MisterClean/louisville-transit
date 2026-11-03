@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { WIDTH, HEIGHT, STYLE } = require('../../src/tarc/map/common');
+const { WIDTH, HEIGHT } = require('../../src/tarc/map/common');
 const { computeGapView } = require('../../src/tarc/map/busGap');
 const { computeBunchingView } = require('../../src/tarc/map/busBunching');
 const { viewFor, gapViewFor } = require('../../src/tarc/map/railIncidents');
@@ -58,9 +58,7 @@ function denseShape(pointCount = 1600) {
 }
 
 function staticUrlLength(view) {
-  const token = 'test-token';
-  return `https://api.mapbox.com/styles/v1/${STYLE}/static/${view.overlays.join(',')}/${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`
-    .length;
+  return view.overlays.join(',').length + `${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}`.length;
 }
 
 test('TARC bus gap map overlays are short enough for dense long routes', () => {

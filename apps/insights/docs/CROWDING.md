@@ -48,7 +48,7 @@ Identical construction to the bus speedmap, only the per-segment color scale dif
 
 1. Each occupancy-bearing observation is projected onto its trip's shape (`src/marta/bus/shapes.js`, the `pdist` analog) → a `{ distFt, score }` sample.
 2. Samples bin into 40 equal-length segments; each segment's color is its **average** score (`binSamples` → `colorForCrowding`).
-3. The shape polyline is **thinned** before encoding (`thinPolylinePoints`) so the Mapbox static URL stays under its ~8 KB limit — the same fix bus speedmaps needed (a full untthinned bus shape is 20k+ points and 414'd every request).
+3. The shape polyline is **thinned** before encoding (`thinPolylinePoints`) to keep static overlay rendering efficient for long bus routes.
 
 `bin/marta/bus/crowding-map.js` features the **most crowded** eligible route each run (coverage ≥ `MIN_COVERAGE` 0.3, ≥ `MIN_SAMPLES` 20, standing-or-fuller share ≥ `MIN_CROWDED_FRACTION` 0.15, and crowding from ≥ `MIN_CROWDED_VEHICLES` 2 distinct vehicles), with a 6 h per-route cooldown so a chronically packed trunk doesn't dominate every hour. Silent when nothing clears the bar.
 

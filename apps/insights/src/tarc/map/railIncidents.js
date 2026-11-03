@@ -4,7 +4,6 @@ const { cumulativeDistances, bearing } = require('../../shared/geo');
 const { fitZoom, project } = require('../../shared/projection');
 const { projectToShape } = require('../bus/shapes');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
@@ -18,8 +17,7 @@ const {
   markerLabelChip,
   fitTitlePill,
   xmlEscape,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   separateMarkers,
   perpendicularFromBearing,
   thinPolylinePoints,
@@ -106,7 +104,7 @@ function viewFor(line, trains, { loFt = 0, hiFt = line.lengthFt, travelSign } = 
   };
   const centerLat = (bbox.minLat + bbox.maxLat) / 2;
   const centerLon = (bbox.minLon + bbox.maxLon) / 2;
-  // Fractional zoom — Mapbox Static accepts it and project() honors it. Flooring
+  // Fractional zoom — MapLibre accepts it and project() honors it. Flooring
   // here threw away up to a full zoom level (a 2x scale loss), which on a near-
   // straight rail line shrank the route to a small band in the middle of the frame.
   const zoom = Math.max(9, Math.min(17, fitZoom(bbox, WIDTH, HEIGHT, 110)));
@@ -185,10 +183,7 @@ function gapViewFor(line, gap, { contextFt = GAP_CONTEXT_FT, travelSign, framePo
 }
 
 async function fetchBaseMap(view) {
-  const token = requireMapboxToken();
-  const overlayPath = view.overlays.length > 0 ? `${view.overlays.join(',')}/` : '';
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlayPath}${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  return fetchMapboxStatic(url, 20000);
+  return renderStaticMap({ ...view, width: WIDTH, height: HEIGHT }, 20000);
 }
 
 async function renderRailFrame(view, baseMap, trains, opts = {}) {
@@ -438,9 +433,7 @@ async function renderRailDisruptionMap(disruption, line, opts = {}) {
   const centerLon = (bbox.minLon + bbox.maxLon) / 2;
   const zoom = Math.min(13, fitZoom(bbox, WIDTH, HEIGHT, 120));
 
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlays.join(',')}/${centerLon.toFixed(5)},${centerLat.toFixed(5)},${zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  const baseMap = await fetchMapboxStatic(url, 20000);
+  const baseMap = await renderStaticMap({ overlays, centerLon, centerLat, zoom, width: WIDTH, height: HEIGHT }, 20000);
 
   const titleEls = [];
   if (opts.title) {

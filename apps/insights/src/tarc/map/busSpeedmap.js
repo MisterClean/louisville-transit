@@ -3,15 +3,13 @@ const { encode } = require('../../shared/polyline');
 const { cumulativeDistances } = require('../../shared/geo');
 const { colorForBusSpeed } = require('../bus/speedmap');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
   SPEEDMAP_SEGMENT_STROKE,
   SPEEDMAP_HALO_STROKE,
   sliceIntoSegments,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   thinPolylinePoints,
 } = require('./common');
 
@@ -19,10 +17,7 @@ async function renderBusSpeedmap(shape, binSpeeds) {
   const points = shape.points;
   const cumDist = cumulativeDistances(points);
   const slices = sliceIntoSegments(points, cumDist, binSpeeds.length);
-  // Thin before encoding. Bus GTFS shapes carry 1000+ points; encoding the full
-  // route halo plus every segment overflowed Mapbox's ~8KB static-URL limit and
-  // every render 414'd, so bus speedmaps silently never posted. Rail already
-  // thins for the same reason (railSpeedmap.js) — mirror it here.
+  // Thin dense GTFS shapes so the rendered overlays stay efficient.
   const fullEncoded = encodeURIComponent(
     encode(thinPolylinePoints(points).map((p) => [p.lat, p.lon])),
   );
@@ -36,9 +31,7 @@ async function renderBusSpeedmap(shape, binSpeeds) {
     overlays.push(`path-${SPEEDMAP_SEGMENT_STROKE}+${colorForBusSpeed(binSpeeds[i])}(${encoded})`);
   }
 
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlays.join(',')}/auto/${WIDTH}x${HEIGHT}@2x?access_token=${token}&padding=30`;
-  const data = await fetchMapboxStatic(url);
+  const data = await renderStaticMap({ overlays, width: WIDTH, height: HEIGHT, padding: 30 });
   return sharp(data).jpeg({ quality: 85 }).toBuffer();
 }
 

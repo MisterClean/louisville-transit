@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 FROM node:24-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core ca-certificates unzip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends chromium ffmpeg fonts-dejavu-core ca-certificates unzip && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app /app
 ENV TRANSIT_PUBLISH_ENABLED=false NODE_ENV=production PORT=3100 DATA_DIR=/data TRANSIT_DATA_DIR=/data/gtfs TRANSIT_STATE_DIR=/data/state TRANSIT_WEB_DIR=/data/web

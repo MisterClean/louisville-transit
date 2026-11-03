@@ -1,12 +1,10 @@
-// Shared Mapbox-static + SVG-composite render helpers for TARC map images.
+// Shared Protomaps + SVG-composite render helpers for TARC map images.
 // Ported from the still-image subset of cta-insights src/map/common.js. Dropped
 // here: the articulated-bus glyph + fleet lookup (TARC exposes no fleet
 // metadata), and the video-only helpers (comet trail, clip progress/HUD pills,
 // ghost legend) — those return with the video phase.
-const axios = require('axios');
 const sharp = require('sharp');
 
-const STYLE = 'mapbox/dark-v11';
 const WIDTH = 1200;
 const HEIGHT = 1200;
 
@@ -121,7 +119,7 @@ function buildTrainMarker({ x, y, radius, color }) {
 
 // Dashed polyline in the route color — drawn over bare basemap where the route
 // is intentionally broken (a gap stretch with no service). Ported from the CTA
-// gap renderer; Mapbox static path overlays can't dash, so this runs in the SVG
+// gap renderer; route path overlays can't dash, so this runs in the SVG
 // composite layer.
 function buildDashedGapSvg(points, color, { coreStroke = 8 } = {}) {
   if (!points || points.length < 2) return '';
@@ -162,32 +160,16 @@ function xmlEscape(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function requireMapboxToken() {
-  return process.env.MAPBOX_TOKEN || '';
-}
-
-async function fetchMapboxStatic(url, timeoutMs = 30000) {
-  if (!process.env.MAPBOX_TOKEN) {
-    return require('./geometryBase').renderGeometryBase(url);
-  }
-  // One retry with jittered backoff for transient 429/5xx.
-  let lastErr;
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function renderStaticMap(spec, timeoutMs = 30000, renderBase = require('./protomaps').renderProtomaps) {
+  if (process.env.PROTOMAPS_KEY) {
     try {
-      const { data } = await axios.get(url, { responseType: 'arraybuffer', timeout: timeoutMs });
-      return data;
-    } catch (e) {
-      lastErr = e;
-      if (attempt === 0) {
-        const wait = 500 + Math.floor(Math.random() * 750);
-        await new Promise((r) => setTimeout(r, wait));
-      }
+      return await renderBase(spec, process.env.PROTOMAPS_KEY, timeoutMs);
+    } catch {
+      // Never log provider errors: request URLs can contain the API key.
+      console.warn('Street basemap unavailable; using labeled route geometry');
     }
   }
-  // The route remains visible if an optional map provider is unavailable.
-  // Do not log the token-bearing URL or Axios request configuration.
-  console.warn(`Street basemap unavailable (${lastErr?.response?.status || 'network'}); using labeled route geometry`);
-  return require('./geometryBase').renderGeometryBase(url);
+  return require('./geometryBase').renderGeometryBase(spec);
 }
 
 // `opts.axis` (pixel-space unit vector) constrains pushes to ±axis. Pass the
@@ -254,7 +236,7 @@ function perpendicularFromBearing(bearingDeg) {
 }
 
 // Route lines come from GTFS shapes that already trace the road, but they carry
-// hundreds–thousands of vertices — far more than a Mapbox static URL can hold.
+// hundreds–thousands of vertices, which are expensive to composite.
 // The earlier reducer sampled every Nth vertex by index, which chorded straight
 // across curves and threw the drawn line up to a few hundred feet off the road
 // (jarring, "unsnapped" routes). We instead simplify with Douglas–Peucker, which
@@ -313,7 +295,7 @@ function thinPolylinePoints(points, maxPoints = 120) {
   const cosLat0 = Math.cos((points[0].lat * Math.PI) / 180);
   let tol = ROUTE_SIMPLIFY_TOLERANCE_FT;
   let simplified = simplifyPolyline(points, tol, cosLat0);
-  // maxPoints is the Mapbox static URL budget, not a target: only a pathological
+  // maxPoints is a rendering budget, not a target: only a pathological
   // ultra-dense shape exceeds it after simplifying, so raise the tolerance until
   // it fits rather than fall back to lossy index-sampling.
   while (simplified.length > maxPoints && tol < 100000) {
@@ -465,7 +447,6 @@ function buildReadoutPill(text, { x = 20, y = 20, textWidth = null } = {}) {
 }
 
 module.exports = {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
@@ -492,8 +473,7 @@ module.exports = {
   buildClipProgress,
   buildReadoutPill,
   xmlEscape,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   separateMarkers,
   perpendicularFromBearing,
   thinPolylinePoints,

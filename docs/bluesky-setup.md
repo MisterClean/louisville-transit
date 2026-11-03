@@ -10,7 +10,9 @@ The account DID is `did:plc:ijus5maesleyleeumnub2c77`. The root-domain handle is
 
 1. Use a revocable app password without direct-message access. Store it as private `BLUESKY_ALERTS_APP_PASSWORD` in the Railway production service, never in Git or chat documentation.
 2. Set `BLUESKY_ALERTS_IDENTIFIER=tarctransitalerts.app` and `BLUESKY_ALERTS_DID=did:plc:ijus5maesleyleeumnub2c77`. The DID pins the intended account even if its handle changes. Leave all `BLUESKY_BUS_*` variables unset for single-account publishing.
-3. Review local previews, map/video appearance, source links and alt text. Optional `MAPBOX_TOKEN` enables street basemaps; no-token maps explicitly show route geometry.
+3. Review local previews, map/video appearance, source links and alt text. Optional `PROTOMAPS_KEY` enables Protomaps street basemaps when Chromium is installed; no-key or provider-failure maps explicitly show route geometry without a street basemap. Published maps include OpenStreetMap and Protomaps attribution.
+
+The [hosted Protomaps API](https://protomaps.com/api) is free for noncommercial use; commercial use requires sponsorship. The basemap is an [OpenStreetMap-derived produced work](https://docs.protomaps.com/basemaps/downloads), so keep attribution visible in every published image.
 4. Verify authentication and pinned identity without posting. Enable publishing only after the account and preview review is complete.
 
 `TRANSIT_PUBLISH_ENABLED=false` is the deployed default. The first enabled run establishes a silent baseline, so historical incidents are not announced as new. Publication is limited by freshness, incident age, route cooldowns and daily caps. Root posts, video replies and resolution replies have independent persistent receipts and remain in the same account/thread. Uncertain writes reconcile against the frozen record's TID on the authoritative PDS before retrying. A future second account can be configured with all three `BLUESKY_BUS_*` variables; existing outbox entries retain their original account and DID.

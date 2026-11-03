@@ -2,7 +2,7 @@
 
 Independent bus analytics for TARC, adapted from Cailin Pitt's Atlanta and Chicago transit-insights producers. The production entrypoints are **only** `scripts/runtime/{gtfs,observe,detect,export}.js`; Railway's monorepo scheduler runs them sequentially. Louisville has 14 bus routes and no applicable rail/streetcar mode.
 
-No TARC API key, Bluesky account, Mapbox token, R2 account, or GitHub dispatch token is required for collection, detection, archive, or replay. Public publishing is disabled unless `TRANSIT_PUBLISH_ENABLED=true`; account DIDs must be pinned before delivery.
+No TARC API key, Bluesky account, Protomaps key, R2 account, or GitHub dispatch token is required for collection, detection, archive, or replay. Public publishing is disabled unless `TRANSIT_PUBLISH_ENABLED=true`; account DIDs must be pinned before delivery.
 
 ## Operations
 

@@ -8,7 +8,6 @@ const { encode } = require('../../shared/polyline');
 const { bearing, cumulativeDistances, haversineFt } = require('../../shared/geo');
 const { fitZoom, project } = require('../../shared/projection');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
@@ -26,8 +25,7 @@ const {
   buildClipProgress,
   fitTitlePill,
   xmlEscape,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   separateMarkers,
   perpendicularFromBearing,
   thinPolylinePoints,
@@ -117,9 +115,7 @@ function computeBunchingView(bunch, shape, extraVehicles = []) {
 }
 
 async function fetchBunchingBaseMap(view) {
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${view.overlays.join(',')}/${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  return fetchMapboxStatic(url, 20000);
+  return renderStaticMap({ ...view, width: WIDTH, height: HEIGHT }, 20000);
 }
 
 // Composite numbered bus markers, stop signs, origin/terminal glyphs, the

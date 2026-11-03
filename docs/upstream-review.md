@@ -18,6 +18,6 @@ The Atlanta frontend retains the bounded schema-v2 incident store and essentiall
 - Local incident records and analytics are published whether or not Bluesky accounts exist. Upstream's social-post filters no longer hide locally observed events.
 - Atlanta's train-only replay exporter has been adapted to actual bus observations and GTFS shapes.
 - A single scheduler coordinates collection, detection, media, exports and optional social publishing. Static files and data are served together. No R2 sync, GitHub dispatch token, rebuild webhook, cron daemon or second application service is required.
-- Generated route maps work without Mapbox using explicitly labeled route geometry. An optional Mapbox token adds the upstream street basemap.
+- Generated route maps work without a provider using explicitly labeled route geometry. An optional Protomaps key adds a street basemap.
 
 The interface preserves upstream layout and components, while rail-only controls are removed and Louisville live buses and route analytics use the same visual language. Legacy producer documentation is clearly labeled as upstream reference material; current operating instructions are in the monorepo root and `apps/insights/README.md`.
