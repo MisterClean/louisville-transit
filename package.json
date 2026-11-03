@@ -14,5 +14,8 @@
 		"dev": "PORT=3100 node scripts/server.mjs",
 		"test:runtime": "node --test test/runtime.test.mjs",
 		"test": "npm run test:runtime && npm test --workspace apps/insights && npm test --workspace apps/alerts -- --run"
+	},
+	"overrides": {
+		"zod": "4.6.7"
 	}
 }
