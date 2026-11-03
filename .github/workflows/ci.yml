@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: Test and build
+  checks:
+    name: Lint, test, and app build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,4 +29,26 @@ jobs:
       - run: npm run lint --workspace apps/alerts
       - run: npm test
       - run: npm run build
+
+  container:
+    name: Container build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - run: docker build --tag louisville-transit:ci .
+
+  test:
+    name: Test and build
+    if: ${{ always() }}
+    needs: [checks, container]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require app checks and container build
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
+        run: |
+          if [[ "$CHECKS_RESULT" != success || "$CONTAINER_RESULT" != success ]]; then
+            echo "App checks: $CHECKS_RESULT; container build: $CONTAINER_RESULT"
+            exit 1
+          fi
