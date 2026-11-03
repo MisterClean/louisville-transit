@@ -58,7 +58,7 @@ The application does not automatically send backups off-host. Configure provider
 
 ## Dependency status
 
-The port updates Sharp to a patched release and loads the official GTFS schema directly with protobufjs, removing the unused protobuf compiler dependency chain. The Bluesky SDK currently retains a Zod dependency covered by GHSA-mrhx-c7xc-m3w5. The publisher is disabled by default; its SDK fetch transport bounds response bytes, nesting, node count and collection sizes before schema validation. Track upstream's compatible Zod fix before public release; do not apply an incompatible major-version override merely to hide an audit finding.
+The port updates Sharp to a patched release and loads the official GTFS schema directly with protobufjs, removing the unused protobuf compiler dependency chain. The Bluesky SDK still declares Zod 3 support, but the root dependency override resolves patched Zod 4.6.7 for GHSA-mrhx-c7xc-m3w5. SDK tests cover record reads, guarded writes, deletes, and image upload response validation. A production-account check authenticated, published a temporary text post, read it back, and deleted it. Session refresh and media publishing have not been validated against production; review upstream SDK compatibility before changing the override. The SDK fetch transport bounds response bytes, nesting, node count and collection sizes before schema validation.
 
 ## Observation coverage and historical metrics
 
