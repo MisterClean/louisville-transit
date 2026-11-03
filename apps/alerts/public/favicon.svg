@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Transit alerts</title>
   <rect width="32" height="32" rx="6" fill="#0d1117"/>
   <!-- Red row -->
   <rect x="5"  y="4"  width="4" height="4" rx="1" fill="#ce242b" opacity="0.9"/>

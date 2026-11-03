@@ -5,15 +5,15 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'index.html'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.*'
-      - 'tailwind.config.*'
-      - '.github/workflows/deploy.yml'
+      - "src/**"
+      - "public/**"
+      - "scripts/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - "tailwind.config.*"
+      - ".github/workflows/deploy.yml"
   # Data refreshes. The high-churn data files live in R2, not the repo, so a
   # data change no longer creates a commit. The server fires `data-updated`
   # right after a new incident (mirrors the old event-driven web push), and the
@@ -24,7 +24,7 @@ on:
   repository_dispatch:
     types: [data-updated]
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:

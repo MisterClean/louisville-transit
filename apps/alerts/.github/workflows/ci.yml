@@ -68,4 +68,4 @@ jobs:
 
       - run: npm run build
         env:
-          SKIP_OG_RENDER: '1'
+          SKIP_OG_RENDER: "1"
