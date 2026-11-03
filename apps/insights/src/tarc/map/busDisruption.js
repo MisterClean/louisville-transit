@@ -2,7 +2,6 @@ const sharp = require('sharp');
 const { encode } = require('../../shared/polyline');
 const { fitZoom, project } = require('../../shared/projection');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
@@ -11,8 +10,7 @@ const {
   ROUTE_CORE_STROKE,
   fitTitlePill,
   xmlEscape,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   measureTextWidth,
   thinPolylinePoints,
   paddedBbox,
@@ -77,10 +75,7 @@ async function renderBusDisruptionMap(shape, { title, fromName, toName } = {}) {
   const centerLon = (bbox.minLon + bbox.maxLon) / 2;
   const zoom = Math.max(8, Math.min(15, fitZoom(bbox, WIDTH, HEIGHT, 80)));
 
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlays.join(',')}/${centerLon.toFixed(5)},${centerLat.toFixed(5)},${zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  if (url.length > 8000) return null;
-  const baseMap = await fetchMapboxStatic(url, 20000);
+  const baseMap = await renderStaticMap({ overlays, centerLon, centerLat, zoom, width: WIDTH, height: HEIGHT }, 20000);
 
   const titleEls = [];
   if (title) {

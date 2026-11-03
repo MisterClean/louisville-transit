@@ -1,5 +1,5 @@
 // Manual center+zoom computation so SVG label overlays can use known pixel
-// coordinates. Mapbox Static uses 512px tiles (not the Web Mercator default 256).
+// coordinates. MapLibre uses 512px tiles for this Web Mercator viewport.
 
 const TILE_SIZE = 512;
 

@@ -16,7 +16,7 @@ The port retains applicable bus features from the Atlanta/Chicago projects. Data
 | Adherence | TARC stop prediction delays; labeled predictions rather than realized arrivals |
 | Live bus and route maps | Real feed coordinates and official GTFS shapes, with freshness labels |
 | Incident replay | Captured bus tracks, shape geometry, scrubbing/playback; only available when observations exist |
-| Maps and encoded clips | Upstream bus renderers, bounded background jobs, optional Mapbox street basemap; no-key geometry rendering is labeled |
+| Maps and encoded clips | Upstream bus renderers, bounded background jobs, optional Protomaps street basemap; no-key or provider-failure geometry rendering is labeled |
 | Archive and analytics UI | Active events, search, filters, route/system pages, event details, daily/weekly views, calendar, statistics, comparisons, dark mode, responsive layout |
 | Public exports | Same-origin schema-v2 JSON shards and aggregates, per-route/global feeds, CSV, sitemap |
 | Bluesky | Two optional accounts, local previews, durable post identity and receipts, same-account threaded replies; disabled until configured |

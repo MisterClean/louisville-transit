@@ -3,15 +3,13 @@ const { encode } = require('../../shared/polyline');
 const { cumulativeDistances } = require('../../shared/geo');
 const { colorForRailSpeed } = require('../rail/speedmap');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
   SPEEDMAP_SEGMENT_STROKE,
   SPEEDMAP_HALO_STROKE,
   sliceIntoSegments,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   thinPolylinePoints,
 } = require('./common');
 
@@ -34,9 +32,7 @@ async function renderRailSpeedmap(line, binSpeeds, { colorFn = colorForRailSpeed
     overlays.push(`path-${SPEEDMAP_SEGMENT_STROKE}+${colorFn(binSpeeds[i])}(${encoded})`);
   }
 
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlays.join(',')}/auto/${WIDTH}x${HEIGHT}@2x?access_token=${token}&padding=30`;
-  const data = await fetchMapboxStatic(url);
+  const data = await renderStaticMap({ overlays, width: WIDTH, height: HEIGHT, padding: 30 });
   return sharp(data).jpeg({ quality: 85 }).toBuffer();
 }
 

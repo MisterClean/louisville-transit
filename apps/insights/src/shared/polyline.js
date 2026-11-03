@@ -1,4 +1,4 @@
-// Google Encoded Polyline Algorithm — used by Mapbox Static Images for path overlays.
+// Google Encoded Polyline Algorithm — used by static route-map overlays.
 // https://developers.google.com/maps/documentation/utilities/polylinealgorithmexample
 
 function encodeSigned(value) {

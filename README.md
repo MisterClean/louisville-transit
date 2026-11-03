@@ -15,7 +15,7 @@ The app distinguishes **official TARC alerts** from its own **detector observati
 
 ## Run your own copy
 
-Requires **Node.js 24**, npm, and **FFmpeg** (for video rendering). The first start downloads TARC's public GTFS schedule and begins collecting vehicle positions, trip updates, and alerts. No TARC API key, Mapbox token, or Bluesky account is needed.
+Requires **Node.js 24**, npm, and **FFmpeg** (for video rendering). Install Chromium when using the optional Protomaps street basemap; the Docker image includes it. The first start downloads TARC's public GTFS schedule and begins collecting vehicle positions, trip updates, and alerts. No TARC API key, Protomaps key, or Bluesky account is needed for the labeled route-geometry fallback.
 
 ```sh
 git clone https://github.com/MisterClean/louisville-transit.git
@@ -40,7 +40,7 @@ For local configuration, copy `.env.example` to `.env` and start with `node --en
 | `TRANSIT_POSITION_RETENTION_DAYS` | `7` | Minimum raw SQLite position window; pruning requires verified Parquet publication |
 | `TRANSIT_ARCHIVE_DAY_LIMIT` | `3` | Maximum completed days considered by each archive run |
 
-See [`.env.example`](.env.example) for the remaining archive limits and optional Mapbox and Bluesky settings. The collector uses America/New_York service dates, including overnight GTFS times and daylight saving transitions. Public feeds do not establish a service-level guarantee or unrestricted redistribution rights.
+See [`.env.example`](.env.example) for the remaining archive limits and optional Protomaps and Bluesky settings. Set `PROTOMAPS_KEY` to render street basemaps in generated map images; `PROTOMAPS_STYLE` may be `light` (default), `dark`, `white`, `grayscale`, or `black`. The collector uses America/New_York service dates, including overnight GTFS times and daylight saving transitions. Public feeds do not establish a service-level guarantee or unrestricted redistribution rights.
 
 ## How it works
 
@@ -56,7 +56,7 @@ The runtime writes mutable state under `DATA_DIR`: `gtfs/` for schedules, `state
 
 ### Railway deployment
 
-The production app runs as **one service with one replica** and a persistent volume mounted at `/data`. Set `DATA_DIR=/data`, `TRANSIT_DATA_DIR=/data/gtfs`, `TRANSIT_STATE_DIR=/data/state`, and `TRANSIT_WEB_DIR=/data/web`; set `PUBLIC_URL` to your HTTPS origin. Keep the volume attached at the same path across deployments. SQLite, Parquet, and archive manifests live there; never replace it with a new empty volume during a code deploy. Do not enable multiple replicas against the same local SQLite state. Railway builds from the root [`Dockerfile`](Dockerfile); verify the start command and `/healthz` check in the service settings. [`railway.json`](railway.json) records the legacy config-as-code intent, which new Railway services may not apply.
+The production app runs as **one service with one replica** and a persistent volume mounted at `/data`. Set `DATA_DIR=/data`, `TRANSIT_DATA_DIR=/data/gtfs`, `TRANSIT_STATE_DIR=/data/state`, and `TRANSIT_WEB_DIR=/data/web`; set `PUBLIC_URL` to your HTTPS origin. Keep the volume attached at the same path across deployments. SQLite, Parquet, and archive manifests live there; never replace it with a new empty volume during a code deploy. Do not enable multiple replicas against the same local SQLite state. Select the root [`Dockerfile`](Dockerfile) as Railway's builder so Chromium is available for Protomaps rendering; verify the start command and `/healthz` check in the service settings. [`railway.json`](railway.json) records the legacy config-as-code intent, which new Railway services may not apply.
 
 For a fork, connect your own Railway project to your repository's protected `main` branch and enable **Wait for CI** before automatic production deploys. Keep deployment secrets in Railway variables. [Operations](docs/operations.md) covers health, backups, release checks, and restore; [daily archive documentation](docs/positions-archive.md) covers download and retention guarantees. A volume survives ordinary deploys but is not an off-site backup.
 

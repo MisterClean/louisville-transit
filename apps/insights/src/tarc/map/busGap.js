@@ -3,7 +3,6 @@ const { encode } = require('../../shared/polyline');
 const { cumulativeDistances, bearing } = require('../../shared/geo');
 const { fitZoom, project } = require('../../shared/projection');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   ROUTE_HALO_COLOR,
@@ -23,8 +22,7 @@ const {
   fitTitlePill,
   measureTextWidth,
   xmlEscape,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   separateMarkers,
   perpendicularFromBearing,
   thinPolylinePoints,
@@ -128,10 +126,7 @@ function computeGapView(gap, shape, extraPoints = [], opts = {}) {
 }
 
 async function fetchGapBaseMap(view) {
-  const token = requireMapboxToken();
-  const overlayPath = view.overlays.length > 0 ? `${view.overlays.join(',')}/` : '';
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlayPath}${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  return fetchMapboxStatic(url, 20000);
+  return renderStaticMap({ overlays: view.overlays, ...view, width: WIDTH, height: HEIGHT }, 20000);
 }
 
 async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {

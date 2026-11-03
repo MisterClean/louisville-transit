@@ -7,11 +7,9 @@ const sharp = require('sharp');
 const { encode } = require('../../shared/polyline');
 const { fitZoom, project } = require('../../shared/projection');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   thinPolylinePoints,
   buildClipProgress,
 } = require('./common');
@@ -56,9 +54,7 @@ async function fetchSystemBase(view, lineGeom) {
       `path-${ROUTE_STROKE}+${lineColor(geom.line)}-0.9(${encodeURIComponent(encode(pts))})`,
     );
   }
-  const token = requireMapboxToken();
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlays.join(',')}/${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${view.width}x${view.height}@2x?access_token=${token}`;
-  const data = await fetchMapboxStatic(url);
+  const data = await renderStaticMap({ overlays, ...view });
   return sharp(data).resize(view.width, view.height).png().toBuffer();
 }
 

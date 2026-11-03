@@ -20,13 +20,11 @@ const {
 } = require('../../shared/projection');
 const { encode } = require('../../shared/polyline');
 const {
-  STYLE,
   WIDTH,
   HEIGHT,
   TWEMOJI_BUS_INNER,
   TWEMOJI_TRAIN_INNER,
-  requireMapboxToken,
-  fetchMapboxStatic,
+  renderStaticMap,
   separateMarkers,
   markerLabelChip,
   measureTextWidth,
@@ -106,7 +104,7 @@ function computeCrossView(points) {
   };
   const centerLat = (padded.minLat + padded.maxLat) / 2;
   const centerLon = (padded.minLon + padded.maxLon) / 2;
-  // Fractional zoom (Mapbox static accepts it) — flooring dropped up to a full
+  // Fractional zoom (MapLibre accepts it) — flooring dropped up to a full
   // level, doubling the ground area and leaving a wide cluster tiny in the frame.
   const zoom = Math.max(12, Math.min(17, fitZoom(padded, WIDTH, HEIGHT, 90)));
   return { centerLat, centerLon, zoom, bbox: padded };
@@ -132,7 +130,7 @@ function frameBounds(view, margin = FRAME_CLIP_MARGIN) {
 
 // Keep only the stretch of a route polyline that's within (a slightly grown)
 // frame. A full shape runs miles past this intersection view; baking the whole
-// thing wastes Mapbox URL budget (several routes at once) and draws nothing
+// thing wastes overlay rendering work (several routes at once) and draws nothing
 // visible. We keep a point whenever it OR a neighbor is inside, so a segment
 // crossing the boundary keeps its outside endpoint and the line runs to the
 // frame edge instead of stopping short.
@@ -151,7 +149,7 @@ function clipPathToView(points, view) {
   return kept.length >= 2 ? kept : [];
 }
 
-// Mapbox static `path-` overlays for each route group's polyline, clipped to the
+// `path-` overlays for each route group's polyline, clipped to the
 // view and colored to match that group's discs + legend. All halos first, then
 // all cores, so where two routes cross a core is never buried under another
 // route's halo. `routePaths`: [{ points:[{lat,lon}], groupIndex }].
@@ -160,7 +158,7 @@ function buildRoutePathOverlays(routePaths, view, colors) {
   const cores = [];
   for (const rp of routePaths || []) {
     // Clip to the frame, then thin so a dense GTFS shape (a vertex every few
-    // feet) doesn't blow the Mapbox static URL length with several lines at once.
+    // feet) keeps rendering work bounded with several lines at once.
     const pts = thinPolylinePoints(clipPathToView(rp?.points, view), 120);
     if (pts.length < 2) continue;
     const encoded = encodeURIComponent(encode(pts.map((p) => [p.lat, p.lon])));
@@ -173,11 +171,8 @@ function buildRoutePathOverlays(routePaths, view, colors) {
 }
 
 async function fetchCrossBaseMap(view, routePaths = [], colors = []) {
-  const token = requireMapboxToken();
   const overlays = buildRoutePathOverlays(routePaths, view, colors);
-  const overlaySeg = overlays.length ? `${overlays.join(',')}/` : '';
-  const url = `https://api.mapbox.com/styles/v1/${STYLE}/static/${overlaySeg}${view.centerLon.toFixed(5)},${view.centerLat.toFixed(5)},${view.zoom.toFixed(2)}/${WIDTH}x${HEIGHT}@2x?access_token=${token}`;
-  return fetchMapboxStatic(url, 20000);
+  return renderStaticMap({ overlays, ...view, width: WIDTH, height: HEIGHT }, 20000);
 }
 
 // Legend bottom-left: a color swatch + route label per group, in a box sized to
@@ -265,7 +260,7 @@ async function renderCrossFrame(
 
 // `points`: [{ lat, lon, label, groupIndex }]. `legend`: [{ label, groupIndex }].
 // `markerKind`: 'bus' | 'train'. Returns a JPEG buffer (single frame); throws
-// (caller posts text-only) on <2 points or a missing Mapbox token.
+// (caller posts text-only) on fewer than two points.
 async function renderCrossBunchingMap({
   points,
   legend = [],
