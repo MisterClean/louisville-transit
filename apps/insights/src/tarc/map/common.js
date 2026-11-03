@@ -160,12 +160,15 @@ function xmlEscape(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function renderStaticMap(spec, timeoutMs = 30000, renderBase = require('./protomaps').renderProtomaps) {
+async function renderStaticMap(spec, timeoutMs = 30000, renderBase = require('./protomaps').renderProtomaps, options = {}) {
   if (process.env.PROTOMAPS_KEY) {
     try {
       return await renderBase(spec, process.env.PROTOMAPS_KEY, timeoutMs);
     } catch {
       // Never log provider errors: request URLs can contain the API key.
+      // A video is cached and published once, so retry its render on a later
+      // media run instead of permanently publishing a transient fallback.
+      if (options.requireBasemap) throw new Error('Protomaps street basemap unavailable; video will retry');
       console.warn('Street basemap unavailable; using labeled route geometry');
     }
   }

@@ -80,7 +80,7 @@ async function captureBusBunchingHistoryVideo(bunch, shape, rows, opts = {}) {
 
   const extra = enriched.map((v) => ({ lat: v.lat, lon: v.lon, distFt: v.distFt }));
   const view = computeBunchingView(bunch, shape, extra);
-  const baseMap = await fetchBunchingBaseMap(view);
+  const baseMap = await fetchBunchingBaseMap(view, { requireBasemap: true });
   const labels = assignBusNumbers(bunch.vehicles);
   const { frames, times, startTs, videoEndTs } = buildSmoothFrames(snapshots, {
     idOf: (v) => v.vehicleId,
@@ -135,7 +135,7 @@ async function captureBusGapHistoryVideo(gap, shape, rows, opts = {}) {
     .map((v) => ({ lat: v.lat, lon: v.lon, distFt: v.distFt }));
   const framePoints = [...trailingPath, ...(waitStop ? [waitStop] : [])];
   const view = computeGapView(gap, shape, [], { framePoints });
-  const baseMap = await fetchGapBaseMap(view);
+  const baseMap = await fetchGapBaseMap(view, { requireBasemap: true });
   const { frames, times, startTs, videoEndTs } = buildSmoothFrames(snapshots, {
     idOf: (v) => v.vehicleId,
     trackOf: (v) => v.distFt,
