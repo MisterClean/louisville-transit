@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Louisville Transit Alerts bus avatar</title>
+  <desc id="description">A simple front-facing white city bus on a midnight-blue circle, with cyan windows and a gold-to-orange transit stripe.</desc>
+  <defs>
+    <linearGradient id="disc" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#073A64"/>
+      <stop offset="1" stop-color="#10223F"/>
+    </linearGradient>
+    <linearGradient id="stripe" x1="262" y1="0" x2="762" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10B8E7"/>
+      <stop offset="0.54" stop-color="#FFC436"/>
+      <stop offset="1" stop-color="#F58731"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="330" x2="0" y2="598" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B7B9C"/>
+      <stop offset="1" stop-color="#12476D"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Everything important stays within the circular crop used by Bluesky. -->
+  <circle cx="512" cy="512" r="500" fill="url(#disc)"/>
+  <circle cx="512" cy="512" r="486" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="6"/>
+  <path d="M182 738a412 412 0 0 0 660 0" fill="none" stroke="#11B5DF" stroke-opacity="0.20" stroke-width="28" stroke-linecap="round"/>
+
+  <!-- Wheels are distinct at feed size, even after the round avatar crop. -->
+  <rect x="254" y="706" width="100" height="105" rx="26" fill="#07182B"/>
+  <rect x="670" y="706" width="100" height="105" rx="26" fill="#07182B"/>
+  <rect x="268" y="718" width="74" height="78" rx="20" fill="#263C54"/>
+  <rect x="682" y="718" width="74" height="78" rx="20" fill="#263C54"/>
+
+  <!-- The front of a low-floor city bus, with no official wordmark. -->
+  <rect x="226" y="218" width="572" height="550" rx="92" fill="#D7E4E8"/>
+  <rect x="238" y="226" width="548" height="530" rx="82" fill="#F9FCFA"/>
+  <rect x="273" y="260" width="478" height="69" rx="23" fill="#152D48"/>
+  <rect x="296" y="282" width="432" height="26" rx="13" fill="#FFBF37"/>
+  <rect x="267" y="350" width="490" height="265" rx="30" fill="url(#glass)"/>
+  <path d="M300 365h85l-81 224h-19z" fill="#7FD3DF" fill-opacity="0.42"/>
+  <path d="M421 365h32l-74 224h-31z" fill="#B5E3E6" fill-opacity="0.25"/>
+  <path d="M520 350v265" stroke="#E7F4F2" stroke-width="15"/>
+  <path d="M266 638h492v28H266z" fill="url(#stripe)"/>
+  <rect x="281" y="685" width="105" height="51" rx="20" fill="#173D63"/>
+  <rect x="638" y="685" width="105" height="51" rx="20" fill="#173D63"/>
+  <rect x="290" y="690" width="81" height="39" rx="15" fill="#FCE6A0"/>
+  <rect x="653" y="690" width="81" height="39" rx="15" fill="#FCE6A0"/>
+  <rect x="418" y="691" width="188" height="39" rx="17" fill="#C5D6D8"/>
+  <path d="M462 710h100" stroke="#678CA1" stroke-width="9" stroke-linecap="round"/>
+</svg>

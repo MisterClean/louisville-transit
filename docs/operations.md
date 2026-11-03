@@ -6,7 +6,7 @@ Use Node 24. `npm start` serves the built frontend and schedules collection. Job
 
 Mount a persistent volume at `/data`. Set `DATA_DIR=/data`, `TRANSIT_DATA_DIR=/data/gtfs`, `TRANSIT_STATE_DIR=/data/state`, and `TRANSIT_WEB_DIR=/data/web`. Keep one replica because SQLite and scheduler ownership are local to this volume. Set `PUBLIC_URL` to the deployment's HTTPS origin. Do not put credentials in repository files.
 
-The standard polling interval is 60 seconds. Static GTFS and schedule indexes refresh daily. Media and optional publication run at a slower cadence. Publishing defaults to `TRANSIT_PUBLISH_ENABLED=false`; enabling it requires the account setup checklist.
+The code defaults to `POLL_INTERVAL_MS=60000`; Louisville production uses `30000` to capture TARC's approximately 30-second VehiclePosition updates. The scheduler targets this interval between cycle starts and never overlaps cycles; a cycle taking longer than the interval delays the next fetch. Each cycle fetches vehicle positions, trip updates and alerts; only advanced feed timestamps create new observation snapshots. Static GTFS and schedule indexes refresh daily. Media and optional publication run at a slower cadence. Publishing defaults to `TRANSIT_PUBLISH_ENABLED=false`; enabling it requires the account setup checklist.
 
 ## Lean hosting decisions
 

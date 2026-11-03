@@ -1,20 +1,20 @@
-# Bluesky account handoff
+# Bluesky publisher setup
 
-Two dedicated accounts match Louisville's bus-only scope:
+One account publishes both official TARC alerts and independently observed bus-service events:
 
-| Account | Suggested display name | Purpose |
+| Account | Display name | Purpose |
 | --- | --- | --- |
-| Bus | Louisville Bus Insights | Observed bunching, gaps, missing buses, speed/crowding maps and clips |
-| Alerts | Louisville Transit Alerts | Official TARC alerts, cancellations and correlated disruptions |
+| [@tarctransitalerts.app](https://bsky.app/profile/tarctransitalerts.app) | Louisville Transit Alerts | Official alerts, bus observations, speed/crowding maps and clips |
 
-Handles are configurable and availability has not been checked. A suitable bio is: “Automated, independent observations of Louisville TARC service. Public TARC feeds; not affiliated with TARC. Data and methodology: [site URL].” Do not describe detector observations as agency announcements.
+The account DID is `did:plc:ijus5maesleyleeumnub2c77`. The root-domain handle is verified by the `_atproto.tarctransitalerts.app` TXT record. Its public profile has an independent/unofficial bio, the live dashboard link, the automation label, and the tracked bus avatar in `branding/bluesky-bus-avatar.svg`. Regenerate the PNG with `node apps/insights/scripts/tarc/render-bus-avatar.js` from the monorepo root. The production `BLUESKY_ALERTS_*` variables authenticate to the pinned DID without posting. Do not describe detector observations as agency announcements.
 
-1. Create the two accounts and verify any email/video requirements directly with Bluesky.
-2. Create revocable app passwords without direct-message access. Store them as private deployment variables, never in Git or chat documentation.
-3. Configure `BLUESKY_BUS_IDENTIFIER`, `BLUESKY_BUS_APP_PASSWORD`, `BLUESKY_BUS_DID`, and their `BLUESKY_ALERTS_` counterparts. The stable DIDs pin the intended accounts even if their handles change.
-4. Review local previews, map/video appearance, source links and alt text. Optional `MAPBOX_TOKEN` enables street basemaps; no-token maps explicitly show route geometry.
-5. Verify authentication and pinned identities without posting. Then enable publishing only after the account and preview review is complete.
+1. Use a revocable app password without direct-message access. Store it as private `BLUESKY_ALERTS_APP_PASSWORD` in the Railway production service, never in Git or chat documentation.
+2. Set `BLUESKY_ALERTS_IDENTIFIER=tarctransitalerts.app` and `BLUESKY_ALERTS_DID=did:plc:ijus5maesleyleeumnub2c77`. The DID pins the intended account even if its handle changes. Leave all `BLUESKY_BUS_*` variables unset for single-account publishing.
+3. Review local previews, map/video appearance, source links and alt text. Optional `MAPBOX_TOKEN` enables street basemaps; no-token maps explicitly show route geometry.
+4. Verify authentication and pinned identity without posting. Enable publishing only after the account and preview review is complete.
 
-`TRANSIT_PUBLISH_ENABLED=false` is the deployed default. The first enabled run establishes a silent baseline, so historical incidents are not announced as new. Publication is limited by freshness, incident age, route cooldowns and daily caps. Root posts, video replies and resolution replies have independent persistent receipts and remain in the same account/thread. Uncertain writes reconcile against the frozen record's TID on the authoritative PDS before retrying.
+`TRANSIT_PUBLISH_ENABLED=false` is the deployed default. The first enabled run establishes a silent baseline, so historical incidents are not announced as new. Publication is limited by freshness, incident age, route cooldowns and daily caps. Root posts, video replies and resolution replies have independent persistent receipts and remain in the same account/thread. Uncertain writes reconcile against the frozen record's TID on the authoritative PDS before retrying. A future second account can be configured with all three `BLUESKY_BUS_*` variables; existing outbox entries retain their original account and DID.
+
+Production publishing was enabled on November 2, 2026. Railway deployment `7be4ea17-bca7-43bc-ab7c-223ac543fd88` completed successfully, and its first publisher cycle logged `{"baseline":true,"posted":0}`. The live health endpoint reported a successful publish job and fresh TARC sources. The public account still had zero posts after that baseline; the first post will require a new eligible event.
 
 Collector history and website exports work while publication is disabled. No account creation, profile changes, follows, messages or live posts are performed by installation.

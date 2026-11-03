@@ -384,6 +384,7 @@ export function createRuntime(options = {}) {
 	}
 	async function cycle() {
 		if (stopped) return;
+		const startedAt = Date.now();
 		try {
 			const disk = await statfs(dataDir);
 			state.storage = {
@@ -417,7 +418,11 @@ export function createRuntime(options = {}) {
 			if (!stopped)
 				timer = setTimeout(
 					launchCycle,
-					Number(process.env.POLL_INTERVAL_MS || 60000),
+					Math.max(
+						0,
+						Number(process.env.POLL_INTERVAL_MS || 60000) -
+							(Date.now() - startedAt),
+					),
 				);
 		}
 	}

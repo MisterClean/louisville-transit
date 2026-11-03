@@ -143,7 +143,7 @@ test('partial replies recover after restart without reposting root or successful
   assert.equal(agents.BUS.calls.length, 3);
 });
 
-test('all credentials and distinct pinned identities are checked before either login', async (t) => {
+test('required ALERTS credentials are checked before either login', async (t) => {
   const { options, logins } = setup(t);
   delete process.env.BLUESKY_ALERTS_DID;
   await assert.rejects(main(options), /BLUESKY_ALERTS_DID/);
@@ -440,4 +440,118 @@ test('crowding rollup continuations retain independent same-account reply receip
   } finally {
     db.close();
   }
+});
+
+function singleAccount() {
+  for (const suffix of ['IDENTIFIER', 'APP_PASSWORD', 'DID'])
+    delete process.env[`BLUESKY_BUS_${suffix}`];
+}
+
+test('single ALERTS account publishes official alerts, observations, and resolutions once', async (t) => {
+  const { now, options, agents, dir } = setup(t);
+  singleAccount();
+  await main(options);
+  options.now = now + 1000;
+  options.events = [
+    event('single-observation', now + 1000),
+    event('single-official', now + 1000, {
+      routes: ['27'],
+      official_alert: { headline: 'Official alert' },
+    }),
+  ];
+  assert.equal((await main(options)).posted, 2);
+  options.events = options.events.map((item) => ({
+    ...item,
+    lifecycle: { ...item.lifecycle, active: false, resolved_ts: now + 2000 },
+  }));
+  assert.equal((await main(options)).posted, 2);
+  assert.equal((await main(options)).posted, 0);
+  assert.equal(agents.BUS.calls.length, 0);
+  assert.equal(agents.ALERTS.calls.length, 4);
+  const db = new Database(path.join(dir, 'runtime-publisher.sqlite'), { readonly: true });
+  try {
+    for (const row of db.prepare('SELECT * FROM runtime_outbox').all()) {
+      assert.equal(row.account, 'ALERTS');
+      assert.equal(JSON.parse(row.payload).account_did, 'did:plc:alerts');
+      assert.equal(row.status, 'sent');
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('partial BUS configuration and duplicate two-account DIDs fail before state creation', async (t) => {
+  const { options, logins, dir } = setup(t);
+  delete process.env.BLUESKY_BUS_APP_PASSWORD;
+  await assert.rejects(main(options), /BLUESKY_BUS_APP_PASSWORD/);
+  process.env.BLUESKY_BUS_APP_PASSWORD = 'fake';
+  process.env.BLUESKY_BUS_DID = process.env.BLUESKY_ALERTS_DID;
+  await assert.rejects(main(options), /distinct pinned DIDs/);
+  assert.equal(logins(), 0);
+  assert.equal(fs.existsSync(path.join(dir, 'runtime-publisher.sqlite')), false);
+});
+
+test('single account recovers uncertain receipts and retains analytics continuation identity', async (t) => {
+  const { now, options, agents } = setup(t);
+  singleAccount();
+  await main(options);
+  options.now = now + 1000;
+  options.analyticsMedia = {};
+  options.analytics = {
+    generated_at: now + 1000,
+    crowding_rollup: Array.from({ length: 10 }, (_, i) => ({
+      route: String(i + 10),
+      total: 20,
+      crowded: 10,
+      pctCrowded: 0.5,
+      crowdedVehicles: 2,
+    })),
+  };
+  let lost = true;
+  options.adapter = {
+    ...bluesky,
+    postText: async (...args) => {
+      const receipt = await bluesky.postText(...args);
+      if (lost) {
+        lost = false;
+        throw new Error('Lost single-account receipt');
+      }
+      return receipt;
+    },
+  };
+  await assert.rejects(main(options), /Lost single-account receipt/);
+  await main(options);
+  assert.equal(agents.ALERTS.posted.length, 1);
+  const root = agents.ALERTS.posted[0];
+  for (let i = 0; i < 5; i++) await main(options);
+  assert.ok(agents.ALERTS.posted.length > 1);
+  for (const reply of agents.ALERTS.posted.slice(1))
+    assert.equal(reply.record.reply.root.uri, root.uri);
+  const count = agents.ALERTS.posted.length;
+  await main(options);
+  assert.equal(agents.ALERTS.posted.length, count);
+  assert.equal(agents.BUS.calls.length, 0);
+});
+
+test('removing BUS credentials does not reroute its frozen pending delivery', async (t) => {
+  const { now, options, agents } = setup(t);
+  await main(options);
+  options.now = now + 1000;
+  options.events = [event('frozen-bus', now + 1000)];
+  options.adapter = {
+    ...bluesky,
+    postText: async () => {
+      throw new Error('Deferred BUS delivery');
+    },
+  };
+  await assert.rejects(main(options), /Deferred BUS delivery/);
+  singleAccount();
+  options.adapter = bluesky;
+  await assert.rejects(main(options), /Frozen outbox account DID/);
+  assert.equal(agents.ALERTS.calls.length, 0);
+  process.env.BLUESKY_BUS_DID = 'did:plc:bus';
+  process.env.BLUESKY_BUS_IDENTIFIER = 'bus.test';
+  process.env.BLUESKY_BUS_APP_PASSWORD = 'fake';
+  assert.equal((await main(options)).posted, 1);
+  assert.equal(agents.BUS.calls.length, 1);
 });

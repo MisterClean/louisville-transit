@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// Sets displayName, description, and avatar for the TARC bot accounts from the
-// declarative config in lib/bot-accounts.js + the generated avatars in
-// assets/tarc/. Idempotent: upsertProfile reads the current record and merges,
-// so re-running only changes the three fields we manage. Run after
-// generate-avatar.js.
+// Sets displayName, description, and avatar for the Louisville Bluesky account
+// from lib/bot-accounts.js and the tracked avatar in branding/. Idempotent:
+// upsertProfile reads the current record and merges, so re-running only changes
+// the three fields we manage. Regenerate the PNG from the tracked SVG as needed.
 //
 // Usage:
-//   node scripts/tarc/set-profile.js [--kind=bus|train|alerts] [--dry-run]
+//   node scripts/tarc/set-profile.js [--kind=alerts] [--dry-run]
 //   node scripts/tarc/set-profile.js --no-avatar   # text fields only
 
 require('dotenv').config({
@@ -32,10 +31,12 @@ async function applyOne(account) {
 
   let avatarBuf = null;
   if (!argv['no-avatar']) {
-    const avatarPath = path.join(ASSET_DIR, account.avatar);
+    const avatarPath = account.avatarSource
+      ? path.resolve(__dirname, '../../../../', account.avatarSource)
+      : path.join(ASSET_DIR, account.avatar);
     if (!fs.existsSync(avatarPath)) {
       throw new Error(
-        `[${account.label}] missing ${avatarPath} — run scripts/tarc/generate-avatar.js first`,
+        `[${account.label}] missing ${avatarPath} — generate the profile image first`,
       );
     }
     avatarBuf = fs.readFileSync(avatarPath);
@@ -44,7 +45,7 @@ async function applyOne(account) {
   console.log(`\n[${account.label}] ${account.handle}`);
   console.log(`  displayName: ${account.displayName}`);
   console.log(`  description:\n    ${account.description.replace(/\n/g, '\n    ')}`);
-  console.log(`  avatar: ${argv['no-avatar'] ? '(unchanged)' : account.avatar}`);
+  console.log(`  avatar: ${argv['no-avatar'] ? '(unchanged)' : account.avatarSource || account.avatar}`);
 
   if (argv['dry-run']) {
     console.log('  [dry-run] not writing profile');

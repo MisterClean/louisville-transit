@@ -15,7 +15,10 @@ function schema(db) {
     db.exec('ALTER TABLE runtime_outbox ADD COLUMN attempted_at INTEGER');
 }
 function credentials() {
-  for (const account of ['BUS', 'ALERTS'])
+  const accounts = ['ALERTS'];
+  if (['IDENTIFIER', 'APP_PASSWORD', 'DID'].some((suffix) => process.env[`BLUESKY_BUS_${suffix}`]))
+    accounts.push('BUS');
+  for (const account of accounts)
     for (const suffix of ['IDENTIFIER', 'APP_PASSWORD', 'DID']) {
       const value = process.env[`BLUESKY_${account}_${suffix}`];
       if (!value || (suffix === 'DID' && !value.startsWith('did:')))
@@ -23,8 +26,11 @@ function credentials() {
           `BLUESKY_${account}_${suffix} must be configured before enabling publishing`,
         );
     }
-  if (process.env.BLUESKY_BUS_DID === process.env.BLUESKY_ALERTS_DID)
-    throw new Error('BUS and ALERTS must have distinct pinned DIDs');
+  if (accounts.includes('BUS') && process.env.BLUESKY_BUS_DID === process.env.BLUESKY_ALERTS_DID)
+    throw new Error(
+      'BUS and ALERTS must have distinct pinned DIDs; omit BUS credentials for one account',
+    );
+  return accounts.includes('BUS') ? 'BUS' : 'ALERTS';
 }
 function fresh(health, now) {
   return (
@@ -46,13 +52,13 @@ function textLimit(text, limit = 295) {
     .map((x) => x.segment)
     .join('');
 }
-function accountFor(event) {
+function accountFor(event, observationAccount) {
   return event.official_alert ||
     (event.detections || []).some((detection) =>
       ['cancellation', 'incident-roundup'].includes(detection.source),
     )
     ? 'ALERTS'
-    : 'BUS';
+    : observationAccount;
 }
 function cancellation(event) {
   return (event.detections || []).some((detection) => detection.source === 'cancellation');
@@ -73,7 +79,7 @@ function mediaFile(url, webDir) {
 async function main(options = {}) {
   // This guard deliberately precedes all disk, credential and network work.
   if (!publishingEnabled()) return { disabled: true, posted: 0 };
-  credentials();
+  const observationAccount = credentials();
   const now = options.now ?? Date.now(),
     stateDir = options.stateDir || process.env.TRANSIT_STATE_DIR,
     webDir = options.webDir || process.env.TRANSIT_WEB_DIR;
@@ -169,7 +175,7 @@ async function main(options = {}) {
       const root = db
         .prepare("SELECT * FROM runtime_outbox WHERE event_id=? AND part='root'")
         .get(event.id);
-      const account = root?.account || accountFor(event);
+      const account = root?.account || accountFor(event, observationAccount);
       if (!root) {
         if (db.prepare('SELECT 1 FROM publisher_baseline WHERE event_id=?').get(event.id)) continue;
         if (
@@ -210,7 +216,7 @@ async function main(options = {}) {
     })) {
       const image = mediaFile(candidate.image_url, webDir);
       if (candidate.image_url && !image) continue;
-      enqueue(candidate, 'root', 'BUS', {
+      enqueue(candidate, 'root', observationAccount, {
         text:
           candidate.analytics.kind === 'crowding-rollup'
             ? candidate.text
@@ -226,7 +232,7 @@ async function main(options = {}) {
       .all()) {
       const facts = JSON.parse(root.payload).facts;
       if (facts.analytics?.posts) {
-        if (JSON.parse(root.payload).account_did !== process.env.BLUESKY_BUS_DID)
+        if (JSON.parse(root.payload).account_did !== process.env[`BLUESKY_${root.account}_DID`])
           throw new Error('Frozen rollup account DID differs from configured identity');
         for (let i = 1; i < facts.analytics.posts.length; i++) {
           const parent =
@@ -236,7 +242,7 @@ async function main(options = {}) {
                   .prepare('SELECT * FROM runtime_outbox WHERE event_id=? AND part=?')
                   .get(root.event_id, `rollup-${i - 1}`);
           if (parent?.status !== 'sent') break;
-          enqueue(facts, `rollup-${i}`, 'BUS', {
+          enqueue(facts, `rollup-${i}`, root.account, {
             text: facts.analytics.posts[i].text,
             kind: 'text',
             reply: {
