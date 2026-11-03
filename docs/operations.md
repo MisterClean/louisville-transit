@@ -25,6 +25,8 @@ Local measurement with roughly 67 buses and 199 active trip updates showed about
 
 Run CI for the intended Git revision before release. The Docker build installs native modules on Linux, builds the frontend, and removes development dependencies. Keep the attached volume and environment variables when replacing the application image.
 
+The production Railway service currently uses a Dockerfile-detected build and an HTTP `/healthz` check. Railway's dashboard marks legacy config-as-code files as deprecated for new services, so verify the service's build, start, health, replica, and volume settings in Railway rather than assuming `railway.json` will apply. Its single `/data` volume contains SQLite and Parquet history; never replace the mount when connecting a GitHub source.
+
 If Railway's GitHub integration has access to the repository, connect the chosen branch or pin an exact reviewed commit. Otherwise deploy from a clean checkout with the Railway CLI:
 
 ```sh
