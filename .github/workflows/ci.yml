@@ -1,9 +1,17 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   test:
+    name: Test and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,3 +25,4 @@ jobs:
       - run: npm run lint --workspace apps/alerts
       - run: npm test
       - run: npm run build
+      - run: docker build --tag louisville-transit:ci .
