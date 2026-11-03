@@ -1,0 +1,30 @@
+name: Transit data or detector issue
+description: Report a stale feed, incorrect route match, or unsupported service claim.
+title: "Data: "
+body:
+  - type: textarea
+    id: observation
+    attributes:
+      label: What did the app show?
+      description: Link the page and describe the exact claim, route, and local time.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What evidence differs?
+      description: Include source timestamps, public TARC references, or a sanitized fixture. A missing bus alone does not prove cancellation.
+    validations:
+      required: true
+  - type: input
+    id: health
+    attributes:
+      label: Feed health at the time
+      description: If available, summarize /data/health.json without private environment details.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed credentials, private data, and raw collected history.
+          required: true
