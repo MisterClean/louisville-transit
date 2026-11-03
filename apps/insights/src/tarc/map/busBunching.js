@@ -114,8 +114,8 @@ function computeBunchingView(bunch, shape, extraVehicles = []) {
   return { overlays, centerLat, centerLon, zoom, bearingDeg, bbox, origin, terminal };
 }
 
-async function fetchBunchingBaseMap(view) {
-  return renderStaticMap({ ...view, width: WIDTH, height: HEIGHT }, 20000);
+async function fetchBunchingBaseMap(view, options = {}) {
+  return renderStaticMap({ ...view, width: WIDTH, height: HEIGHT }, 20000, undefined, options);
 }
 
 // Composite numbered bus markers, stop signs, origin/terminal glyphs, the

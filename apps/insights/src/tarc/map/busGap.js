@@ -125,8 +125,8 @@ function computeGapView(gap, shape, extraPoints = [], opts = {}) {
   return { overlays, gapPath, centerLat, centerLon, zoom, bearingDeg, origin, terminal };
 }
 
-async function fetchGapBaseMap(view) {
-  return renderStaticMap({ overlays: view.overlays, ...view, width: WIDTH, height: HEIGHT }, 20000);
+async function fetchGapBaseMap(view, options = {}) {
+  return renderStaticMap({ overlays: view.overlays, ...view, width: WIDTH, height: HEIGHT }, 20000, undefined, options);
 }
 
 async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {

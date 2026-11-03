@@ -120,6 +120,7 @@ async function main() {
       body,
       baseUrl ? `${baseUrl}/event/${encodeURIComponent(row.id)}` : null,
     );
+    let renderingVideo = false;
     try {
       if (!index[row.id]?.image_url) {
         const image =
@@ -142,11 +143,13 @@ async function main() {
       if (
         !index[row.id].video_url &&
         !index[row.id].video_checked &&
+        now >= (index[row.id].video_retry_after || 0) &&
         videoAttempts < 1 &&
         now - row.first_seen > 5 * 60000 &&
         ['bunching', 'gap'].includes(row.source)
       ) {
         videoAttempts++;
+        renderingVideo = true;
         const window = clipWindow(row, now);
         const rows = db
           .prepare(
@@ -162,8 +165,12 @@ async function main() {
           videos++;
         }
         index[row.id].video_checked = true;
+        delete index[row.id].video_retry_after;
       }
     } catch (error) {
+      // A failed street-map render must not poison the clip cache or repeatedly
+      // consume this run's one video attempt while other events are waiting.
+      if (renderingVideo) index[row.id].video_retry_after = now + 15 * 60000;
       console.warn(`Media unavailable for ${row.id}: ${error.message}`);
     }
   }
