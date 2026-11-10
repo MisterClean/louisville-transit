@@ -392,3 +392,185 @@ test("relative runtime directories remain absolute when producer child cwd chang
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("optional failures back off while critical collection continues", async () => {
+	const { createCollectorCycle } = await import("../scripts/server.mjs");
+	let now = 1000000;
+	const calls = [];
+	const health = () => ({
+		status: "ok",
+		sources: Object.fromEntries(
+			["vehicles", "trip_updates", "alerts"].map((name) => [
+				name,
+				{ source_timestamp: now },
+			]),
+		),
+	});
+	const collect = createCollectorCycle(
+		{ exportDir: "/nonexistent", stateDir: "/nonexistent" },
+		{ now: () => now, readHealth: async () => health() },
+	);
+	const run = async (name) => {
+		calls.push(name);
+		if (["media", "publish", "archive"].includes(name))
+			throw new Error("resource unavailable");
+	};
+	assert.equal((await collect(run)).status, "ok");
+	assert.ok(calls.indexOf("export") < calls.indexOf("media"));
+	calls.length = 0;
+	now += 30000;
+	await collect(run);
+	assert.deepEqual(calls, ["observe", "detect", "export", "artifacts"]);
+	now += 600000;
+	calls.length = 0;
+	await collect(run);
+	assert.ok(calls.includes("media"));
+});
+
+test("failed observation exports failure state and skips optional work", async () => {
+	const { createCollectorCycle } = await import("../scripts/server.mjs");
+	const calls = [];
+	const collect = createCollectorCycle({
+		exportDir: "/nonexistent",
+		stateDir: "/nonexistent",
+	});
+	await assert.rejects(
+		collect(async (name) => {
+			calls.push(name);
+			if (name === "observe") throw new Error("feed down");
+		}),
+		/feed down/,
+	);
+	assert.deepEqual(calls, ["initialize", "observe", "export", "artifacts"]);
+});
+
+test("missing and invalid required source timestamps cannot report success", async () => {
+	const { createCollectorCycle } = await import("../scripts/server.mjs");
+	for (const sources of [{}, { vehicles: { source_timestamp: NaN } }]) {
+		const collect = createCollectorCycle(
+			{ exportDir: "/nonexistent", stateDir: "/nonexistent" },
+			{ readHealth: async () => ({ status: "ok", sources }) },
+		);
+		await assert.rejects(
+			collect(async () => {}),
+			/Required source feeds stale/,
+		);
+	}
+});
+
+test("job exit kills surviving descendants", {
+	skip: process.platform === "win32",
+}, async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-descendants-"));
+	const script = path.join(dir, "parent.cjs");
+	await writeFile(
+		script,
+		`const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'}); fs.writeFileSync(${JSON.stringify(path.join(dir, "pid"))},String(child.pid)); child.unref();`,
+	);
+	const runtime = createRuntime({
+		dataDir: dir,
+		cycle: async (run) => run("test", script, 5000),
+	});
+	let pid;
+	try {
+		await runtime.start();
+		for (let i = 0; i < 100 && !runtime.state.last_success_at; i++)
+			await new Promise((r) => setTimeout(r, 20));
+		assert.ok(runtime.state.last_success_at);
+		pid = Number(await readFile(path.join(dir, "pid"), "utf8"));
+		let alive = true;
+		for (let i = 0; i < 100; i++) {
+			try {
+				process.kill(pid, 0);
+			} catch (error) {
+				if (error.code === "ESRCH") {
+					alive = false;
+					break;
+				}
+				throw error;
+			}
+			await new Promise((r) => setTimeout(r, 20));
+		}
+		assert.equal(alive, false, "descendant must terminate after parent exits");
+	} finally {
+		if (pid) {
+			try {
+				process.kill(pid, "SIGKILL");
+			} catch {}
+		}
+		await runtime.stop();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("a timed out job cannot claim success by exiting zero on SIGTERM", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-timeout-"));
+	const script = path.join(dir, "timeout.cjs");
+	await writeFile(
+		script,
+		"process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);",
+	);
+	const runtime = createRuntime({
+		dataDir: dir,
+		cycle: async (run) => run("test", script, 500),
+	});
+	try {
+		await runtime.start();
+		for (let i = 0; i < 100 && !runtime.state.last_error; i++)
+			await new Promise((r) => setTimeout(r, 20));
+		assert.match(runtime.state.last_error, /timed out/);
+		assert.equal(runtime.state.last_success_at, null);
+	} finally {
+		await runtime.stop();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("readiness rejects missing sources even when a cycle succeeded", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-ready-"));
+	const runtime = createRuntime({ dataDir: dir });
+	await new Promise((resolve) =>
+		runtime.server.listen(0, "127.0.0.1", resolve),
+	);
+	const base = `http://127.0.0.1:${runtime.server.address().port}`;
+	try {
+		assert.equal((await fetch(`${base}/readyz`)).status, 503);
+		runtime.state.last_success_at = Date.now();
+		assert.equal((await fetch(`${base}/readyz`)).status, 503);
+		runtime.state.sources = Object.fromEntries(
+			["vehicles", "trip_updates", "alerts"].map((name) => [
+				name,
+				{ source_timestamp: Date.now() },
+			]),
+		);
+		assert.equal((await fetch(`${base}/readyz`)).status, 200);
+		runtime.state.sources.alerts.source_timestamp = Date.now() - 600000;
+		assert.equal((await fetch(`${base}/readyz`)).status, 503);
+		assert.equal((await fetch(`${base}/healthz`)).status, 200);
+	} finally {
+		await runtime.stop();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("schedule initialization failures back off without using partially refreshed files", async () => {
+	const { createCollectorCycle } = await import("../scripts/server.mjs");
+	let now = 1000000,
+		initializations = 0;
+	const collect = createCollectorCycle(
+		{ exportDir: "/nonexistent", stateDir: "/nonexistent" },
+		{ now: () => now },
+	);
+	const run = async (name) => {
+		assert.equal(name, "initialize");
+		initializations++;
+		throw new Error("schedule unavailable");
+	};
+	await assert.rejects(collect(run), /schedule unavailable/);
+	now += 30000;
+	await assert.rejects(collect(run), /schedule unavailable/);
+	assert.equal(initializations, 1);
+	now += 300000;
+	await assert.rejects(collect(run), /schedule unavailable/);
+	assert.equal(initializations, 2);
+});

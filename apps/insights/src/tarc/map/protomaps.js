@@ -45,6 +45,7 @@ async function renderProtomaps(spec, key, timeoutMs = 30000) {
   let timer;
   try {
     browser = await chromium.launch({
+      timeout: timeoutMs,
       headless: true,
       executablePath:
         process.env.PROTOMAPS_CHROMIUM_PATH ||
@@ -60,6 +61,8 @@ async function renderProtomaps(spec, key, timeoutMs = 30000) {
       viewport: { width: geometry.width, height: geometry.height },
       deviceScaleFactor: geometry.scale,
     });
+    page.setDefaultTimeout(timeoutMs);
+    page.setDefaultNavigationTimeout(timeoutMs);
     await page.goto(url);
     await Promise.race([
       page.evaluate(
@@ -93,10 +96,22 @@ async function renderProtomaps(spec, key, timeoutMs = 30000) {
       .toBuffer();
   } finally {
     clearTimeout(timer);
-    if (page) await page.close();
-    if (browser) await browser.close();
-    await new Promise((resolve) => server.close(resolve));
+    await closeResources(page, browser, server);
   }
 }
 
-module.exports = { renderProtomaps, startMapServer };
+async function closeResources(page, browser, server) {
+  // A crashed page must not prevent closing Chromium or its local asset server.
+  try {
+    if (page) await page.close();
+  } finally {
+    try {
+      if (browser) await browser.close();
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+}
+
+module.exports = { renderProtomaps, startMapServer, closeResources };

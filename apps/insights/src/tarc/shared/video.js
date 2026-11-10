@@ -10,14 +10,13 @@ async function encodeFrames(
   frames,
   { prefix = 'tarc-video', framerate = 16, holdSeconds = 1 } = {},
 ) {
-  if (!frames || frames.length < 2) return null;
+  if (!frames) return null;
   const tmpDir = await Fs.mkdtemp(Path.join(Os.tmpdir(), `${prefix}-`));
   try {
-    for (let i = 0; i < frames.length; i++) {
-      await Fs.writeFile(Path.join(tmpDir, `frame_${String(i).padStart(3, '0')}.jpg`), frames[i]);
-    }
+    const count = await stageFrames(frames, tmpDir);
+    if (count < 2) return null;
     const holdFrames = Math.max(0, Math.round(framerate * holdSeconds));
-    const lastIdx = frames.length - 1;
+    const lastIdx = count - 1;
     const lastPath = Path.join(tmpDir, `frame_${String(lastIdx).padStart(3, '0')}.jpg`);
     for (let k = 1; k <= holdFrames; k++) {
       await Fs.copyFile(
@@ -66,4 +65,16 @@ async function encodeFrames(
   }
 }
 
-module.exports = { encodeFrames };
+async function stageFrames(frames, directory) {
+  let count = 0;
+  let bytes = 0;
+  for await (const frame of frames) {
+    if (!Buffer.isBuffer(frame)) throw new Error('Video frame must be a Buffer');
+    bytes += frame.length;
+    if (count >= 600 || bytes > 128 * 1024 * 1024) throw new Error('Video frame budget exceeded');
+    await Fs.writeFile(Path.join(directory, `frame_${String(count).padStart(3, '0')}.jpg`), frame);
+    count++;
+  }
+  return count;
+}
+module.exports = { encodeFrames, stageFrames };
