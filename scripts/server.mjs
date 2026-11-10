@@ -115,10 +115,16 @@ export function createRuntime(options = {}) {
 			: state.last_success_at
 				? state.last_error ||
 					Date.now() - state.last_success_at > staleMs ||
-					Object.values(state.sources || {}).some(
-						(source) =>
-							source.error || Date.now() - source.source_timestamp > staleMs,
-					)
+					["vehicles", "trip_updates", "alerts"].some((name) => {
+						const source = state.sources?.[name];
+						return (
+							!source ||
+							source.error ||
+							!Number.isFinite(source.source_timestamp) ||
+							source.source_timestamp > Date.now() + 60000 ||
+							Date.now() - source.source_timestamp > staleMs
+						);
+					})
 					? "stale"
 					: "healthy"
 				: state.last_error
@@ -138,6 +144,10 @@ export function createRuntime(options = {}) {
 			if (raw === "/healthz")
 				return send(res, 200, { status: "ok", data_status: health().status });
 			if (raw === "/api/health") return send(res, 200, health());
+			if (raw === "/readyz") {
+				const current = health();
+				return send(res, current.status === "healthy" ? 200 : 503, current);
+			}
 			if (raw === "/metrics") {
 				res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
 				return res.end(
@@ -331,34 +341,47 @@ export function createRuntime(options = {}) {
 		state.jobs[name] = { started_at: Date.now() };
 		try {
 			await new Promise((resolve, reject) => {
-				child = spawn(process.execPath, [script], {
-					cwd,
-					env: {
-						...process.env,
-						DATA_DIR: dataDir,
-						EXPORT_DIR: exportDir,
-						TRANSIT_DATA_DIR: transitDir,
-						TRANSIT_STATE_DIR: stateDir,
-						TRANSIT_WEB_DIR: exportDir,
-						...Object.fromEntries(
-							[
-								"TARC_GTFS_DIR",
-								"TARC_SCHEDULE_INDEX_PATH",
-								"TARC_SCHEDULE_DB_PATH",
-								"TARC_HISTORY_DB_PATH",
-								"BLUESKY_SESSION_DIR",
-							]
-								.filter((key) => process.env[key])
-								.map((key) => [key, path.resolve(process.env[key])]),
-						),
+				child = spawn(
+					process.execPath,
+					[
+						...(name === "media"
+							? ["--require", path.join(root, "scripts/render-limits.cjs")]
+							: []),
+						script,
+					],
+					{
+						cwd,
+						env: {
+							...process.env,
+							UV_THREADPOOL_SIZE: "2",
+							DATA_DIR: dataDir,
+							EXPORT_DIR: exportDir,
+							TRANSIT_DATA_DIR: transitDir,
+							TRANSIT_STATE_DIR: stateDir,
+							TRANSIT_WEB_DIR: exportDir,
+							...Object.fromEntries(
+								[
+									"TARC_GTFS_DIR",
+									"TARC_SCHEDULE_INDEX_PATH",
+									"TARC_SCHEDULE_DB_PATH",
+									"TARC_HISTORY_DB_PATH",
+									"BLUESKY_SESSION_DIR",
+								]
+									.filter((key) => process.env[key])
+									.map((key) => [key, path.resolve(process.env[key])]),
+							),
+						},
+						stdio: "inherit",
+						detached: process.platform !== "win32",
 					},
-					stdio: "inherit",
-					detached: process.platform !== "win32",
-				});
+				);
 				const job = child;
+				let timedOut = false;
+				let force;
 				const timeout = setTimeout(() => {
+					timedOut = true;
 					killJob(job, "SIGTERM");
-					const force = setTimeout(() => killJob(job, "SIGKILL"), 5000);
+					force = setTimeout(() => killJob(job, "SIGKILL"), 5000);
 					force.unref();
 				}, timeoutMs);
 				child.once("error", (error) => {
@@ -368,10 +391,17 @@ export function createRuntime(options = {}) {
 				});
 				child.once("exit", (code, signal) => {
 					clearTimeout(timeout);
+					clearTimeout(force);
+					// Reap surviving descendants even after a successful parent exit.
+					if (process.platform !== "win32") killJob(job, "SIGKILL");
 					child = undefined;
-					code === 0
+					code === 0 && !timedOut
 						? resolve()
-						: reject(new Error(`${name} exited ${code ?? signal}`));
+						: reject(
+								new Error(
+									`${name} ${timedOut ? "timed out" : `exited ${code ?? signal}`}`,
+								),
+							);
 				});
 			});
 			state.jobs[name].last_success_at = Date.now();
@@ -387,6 +417,18 @@ export function createRuntime(options = {}) {
 		const startedAt = Date.now();
 		try {
 			const disk = await statfs(dataDir);
+			state.resources = { rss_bytes: process.memoryUsage().rss };
+			if (process.platform === "linux") {
+				for (const metric of ["pids.current", "pids.max", "pids.events"]) {
+					try {
+						state.resources[metric] = (
+							await readFile(`/sys/fs/cgroup/${metric}`, "utf8")
+						).trim();
+					} catch {
+						/* cgroup v1 / restricted hosts */
+					}
+				}
+			}
 			state.storage = {
 				available_bytes: disk.bavail * disk.bsize,
 				total_bytes: disk.blocks * disk.bsize,
@@ -451,81 +493,113 @@ export function createRuntime(options = {}) {
 		},
 	};
 }
+export function createCollectorCycle(paths, options = {}) {
+	const now = options.now || Date.now;
+	const readHealth =
+		options.readHealth ||
+		(async () =>
+			JSON.parse(
+				await readFile(path.join(paths.exportDir, "health.json"), "utf8"),
+			));
+	let nextGtfs = 0;
+	let gtfsError;
+	let gtfsFailures = 0;
+	const optionalState = new Map();
+	async function optional(run, name, script, interval, timeout) {
+		const state = optionalState.get(name) || { next: 0, failures: 0 };
+		if (now() < state.next) return;
+		try {
+			await run(name, script, timeout);
+			state.failures = 0;
+		} catch (error) {
+			state.failures++;
+			console.error("[optional job]", name, error.message);
+		} finally {
+			state.next =
+				now() + Math.min(3600000, interval * 2 ** Math.min(state.failures, 4));
+			optionalState.set(name, state);
+		}
+	}
+	return async (run) => {
+		if (now() >= nextGtfs) {
+			try {
+				await run("initialize", "scripts/runtime/gtfs.js", 600000);
+				gtfsError = undefined;
+				gtfsFailures = 0;
+				nextGtfs = now() + 86400000;
+			} catch (error) {
+				// A failed refresh may leave partially updated schedule artifacts.
+				// Do not collect against those until initialization succeeds.
+				gtfsError = error;
+				gtfsFailures++;
+				nextGtfs =
+					now() +
+					Math.min(3600000, 300000 * 2 ** Math.min(gtfsFailures - 1, 4));
+				throw error;
+			}
+		}
+		if (gtfsError) throw gtfsError;
+		let pipelineError;
+		try {
+			await run("observe", "scripts/runtime/observe.js");
+			await run("detect", "scripts/runtime/detect.js");
+		} catch (error) {
+			pipelineError = error;
+		}
+		// Always export failure/freshness state, even when observation failed.
+		await run("export", "scripts/runtime/export.js");
+		await run(
+			"artifacts",
+			"scripts/generate-runtime-artifacts.js",
+			240000,
+			path.join(root, "apps/alerts"),
+		);
+		if (pipelineError) throw pipelineError;
+		const health = await readHealth();
+		if (
+			health.status !== "ok" ||
+			["vehicles", "trip_updates", "alerts"].some((name) => {
+				const source = health.sources?.[name];
+				return (
+					!source ||
+					source.error ||
+					!Number.isFinite(source.source_timestamp) ||
+					source.source_timestamp > now() + 60000 ||
+					now() - source.source_timestamp > 300000
+				);
+			})
+		)
+			throw new Error("Required source feeds stale after processing");
+		// Optional jobs are bounded, observable in jobs[], and retried with backoff.
+		// They never prevent fresh observation/export from completing.
+		await optional(run, "media", "scripts/runtime/media.js", 300000, 120000);
+		await optional(run, "publish", "scripts/runtime/publish.js", 300000, 60000);
+		await optional(
+			run,
+			"archive",
+			"scripts/runtime/archive.js",
+			3600000,
+			120000,
+		);
+		for (const directory of [
+			path.join(paths.exportDir, "media"),
+			path.join(paths.stateDir, "previews"),
+		]) {
+			try {
+				await pruneMedia(directory);
+			} catch (error) {
+				console.error("[media cleanup]", error.message);
+			}
+		}
+		return health;
+	};
+}
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	await stat(path.join(root, "apps/alerts/dist/index.html"));
-	let lastGtfs = 0,
-		lastMedia = 0,
-		lastPublish = 0,
-		lastArchive = 0;
-	const runtime = createRuntime({
-		cycle: async (run) => {
-			if (Date.now() - lastGtfs > 86400000) {
-				await run("initialize", "scripts/runtime/gtfs.js", 600000);
-				for (const directory of [
-					path.join(runtime.paths.exportDir, "media"),
-					path.join(runtime.paths.stateDir, "previews"),
-				])
-					await pruneMedia(directory);
-				lastGtfs = Date.now();
-			}
-			let pipelineError;
-			try {
-				await run("observe", "scripts/runtime/observe.js");
-			} catch (error) {
-				pipelineError = error;
-			}
-			if (!pipelineError) {
-				try {
-					await run("detect", "scripts/runtime/detect.js");
-				} catch (error) {
-					pipelineError = error;
-				}
-			}
-			if (!pipelineError && Date.now() - lastMedia >= 300000) {
-				try {
-					await run("media", "scripts/runtime/media.js", 240000);
-				} catch (error) {
-					pipelineError = error;
-				} finally {
-					lastMedia = Date.now();
-				}
-			}
-			await run("export", "scripts/runtime/export.js");
-			await run(
-				"artifacts",
-				"scripts/generate-runtime-artifacts.js",
-				240000,
-				path.join(root, "apps/alerts"),
-			);
-			if (pipelineError) throw pipelineError;
-			if (Date.now() - lastPublish >= 300000) {
-				try {
-					await run("publish", "scripts/runtime/publish.js", 240000);
-				} finally {
-					lastPublish = Date.now();
-				}
-			}
-			if (Date.now() - lastArchive >= 3600000) {
-				await run("archive", "scripts/runtime/archive.js", 240000);
-				lastArchive = Date.now();
-			}
-			const health = JSON.parse(
-				await readFile(
-					path.join(runtime.paths.exportDir, "health.json"),
-					"utf8",
-				),
-			);
-			if (
-				health.status !== "ok" ||
-				Object.values(health.sources || {}).some(
-					(source) =>
-						source.error || Date.now() - source.source_timestamp > 300000,
-				)
-			)
-				throw new Error("Required source feeds stale after processing");
-			return health;
-		},
-	});
+	let runtime;
+	runtime = createRuntime({ cycle: (run) => collect(run) });
+	const collect = createCollectorCycle(runtime.paths);
+
 	runtime.server.listen(Number(process.env.PORT || 3100), "0.0.0.0", () => {
 		console.log(`TARC listening on ${process.env.PORT || 3100}`);
 		runtime.start();

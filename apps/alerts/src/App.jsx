@@ -357,9 +357,9 @@ export default function App() {
   }, [flat, now]);
 
   const todaySummary = useMemo(() => {
-    if (!flat) return null;
+    if (!flat || health?.status !== 'healthy') return null;
     return buildTodaySummary(flat.officialRecords, flat.detectionRecords, now);
-  }, [flat, now]);
+  }, [flat, now, health?.status]);
 
   // 90-day typical-duration cohort lookup, used by ActiveAlerts to surface
   // a "typically ~Xm" hint next to elapsed time on each active card.

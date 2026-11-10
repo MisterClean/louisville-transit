@@ -88,17 +88,16 @@ async function captureBusBunchingHistoryVideo(bunch, shape, rows, opts = {}) {
     pointAlong: (track) => pointAlongShape(shape, track),
   });
   const totalSec = Math.max(1, (videoEndTs - startTs) / 1000);
-  const images = [];
-  for (let i = 0; i < frames.length; i++) {
-    images.push(
-      await renderBunchingFrame(view, baseMap, frames[i], opts.stops || [], {
+  async function* images() {
+    for (let i = 0; i < frames.length; i++) {
+      yield await renderBunchingFrame(view, baseMap, frames[i], opts.stops || [], {
         labels,
         compactStops: true,
         clock: { elapsedSec: (times[i] - startTs) / 1000, totalSec },
-      }),
-    );
+      });
+    }
   }
-  const buffer = await encodeFrames(images, { prefix: 'tarc-bus-bunching' });
+  const buffer = await encodeFrames(images(), { prefix: 'tarc-bus-bunching' });
   if (!buffer) return null;
   return {
     buffer,
@@ -155,12 +154,11 @@ async function captureBusGapHistoryVideo(gap, shape, rows, opts = {}) {
     return dist == null ? null : waitStop.distFt - dist;
   };
 
-  const images = [];
-  for (let i = 0; i < frames.length; i++) {
-    const byId = new Map(frames[i].map((v) => [String(v.vehicleId), v]));
-    const delta = trailingDeltaAt(frames[i]);
-    images.push(
-      await renderGapFrame(
+  async function* images() {
+    for (let i = 0; i < frames.length; i++) {
+      const byId = new Map(frames[i].map((v) => [String(v.vehicleId), v]));
+      const delta = trailingDeltaAt(frames[i]);
+      yield await renderGapFrame(
         view,
         baseMap,
         {
@@ -174,10 +172,10 @@ async function captureBusGapHistoryVideo(gap, shape, rows, opts = {}) {
           highlightStop,
           readout: delta == null ? null : gapReadout(gapMin, waitStop.stopName || null, delta),
         },
-      ),
-    );
+      );
+    }
   }
-  const buffer = await encodeFrames(images, { prefix: 'tarc-bus-gap' });
+  const buffer = await encodeFrames(images(), { prefix: 'tarc-bus-gap' });
   if (!buffer) return null;
 
   const endDelta = trailingDeltaAt(frames.at(-1));
