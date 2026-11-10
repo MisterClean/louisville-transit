@@ -23,7 +23,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "jsdom": "^29.1.1",
+    "jsdom": "^31.0.0",
     "knip": "^6.16.1",
     "playwright": "^1.59.1",
     "postcss": "^8.5.3",
