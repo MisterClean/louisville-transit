@@ -22,8 +22,9 @@ const { description } = require('./export');
 function readJson(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return fallback;
+  } catch (error) {
+    if (error.code === 'ENOENT') return fallback;
+    throw error;
   }
 }
 function atomic(file, data) {
@@ -74,36 +75,60 @@ async function clusterImage(evidence, gtfs, shapes) {
   });
 }
 
-async function main() {
-  const db = storage.getDb();
-  const dir = path.join(process.env.TRANSIT_WEB_DIR, 'media');
-  fs.mkdirSync(dir, { recursive: true });
-  const indexFile = path.join(dir, 'media-index.json');
-  const index = readJson(indexFile, {});
-  const analyticsFile = path.join(dir, 'analytics-media.json');
-  const analyticsMedia = readJson(analyticsFile, {});
+const { createMediaQueue, RENDER_VERSION } = require('../../src/tarc/mediaQueue');
+const { withRenderDiagnostics, errorCode } = require('../../src/tarc/map/diagnostics');
+
+async function renderJob(job, db, dir) {
+  const now = Date.now();
   const gtfs = loadGtfs(process.env.TARC_GTFS_DIR);
   const shapes = loadShapes(process.env.TARC_GTFS_DIR);
-  const now = Date.now();
-  const events = db
-    .prepare('SELECT * FROM local_events WHERE first_seen > ? ORDER BY first_seen DESC LIMIT 200')
-    .all(now - 90 * 86400000);
-  let rendered = 0;
-  let videos = 0;
-  let videoAttempts = 0;
-  const baseUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
-  for (const row of events) {
-    if (rendered >= 3) break;
-    if (!/^[\w.-]+$/.test(row.id)) continue;
-    const evidence = JSON.parse(row.evidence);
-    const route = gtfs.routes.find((r) => r.route_short_name === row.route);
-    const shape =
-      shapes.get(evidence.shapeId || row.direction) ||
-      shapes.get(gtfs.trips.find((t) => t.route_id === route?.route_id)?.shape_id);
-    if (!shape) continue;
-    const ctx = {
-      routeTitle: `Route ${row.route} — ${route?.route_long_name || ''}`.replace(/ — $/, ''),
+  const metadata = (diagnostics) => ({
+    renderer_version: RENDER_VERSION,
+    basemap: diagnostics.basemap,
+    render_error: diagnostics.error,
+    rendered_at: now,
+  });
+  if (['speedmap', 'crowding'].includes(job.kind)) {
+    const { route, shapeId, result, generated_at } = job.payload;
+    if (!shapes.has(shapeId)) throw new Error('shape unavailable');
+    const render = job.kind === 'speedmap' ? renderBusSpeedmap : renderBusCrowdingMap;
+    const diagnostics = await withRenderDiagnostics(() => render(shapes.get(shapeId), result.bins));
+    const file = path.join(dir, 'analytics-media.json');
+    const index = readJson(file, {});
+    atomic(path.join(dir, `${job.key}.jpg`), diagnostics.value);
+    index[job.key] = {
+      route,
+      kind: job.kind,
+      shape_id: shapeId,
+      image_url: `/data/media/${job.key}.jpg`,
+      updated_at: now,
+      generated_at,
+      window_start: generated_at - 3600000,
+      window_end: generated_at,
+      summary: result.summary,
+      sample_count: result.sampleCount,
+      crowded_vehicle_count: result.crowdedVehicleCount ?? null,
+      coverage: result.summary.covered / result.summary.bins,
+      ...metadata(diagnostics),
     };
+    atomic(file, index);
+    return { quality: diagnostics.basemap, error: diagnostics.error };
+  }
+  const row = db.prepare('SELECT * FROM local_events WHERE id=?').get(job.payload.id);
+  if (!row) return { quality: 'expired' };
+  const evidence = JSON.parse(row.evidence);
+  const route = gtfs.routes.find((r) => r.route_short_name === row.route);
+  const shape =
+    shapes.get(evidence.shapeId || row.direction) ||
+    shapes.get(gtfs.trips.find((t) => t.route_id === route?.route_id)?.shape_id);
+  if (!shape) throw new Error('shape unavailable');
+  const file = path.join(dir, 'media-index.json');
+  const index = readJson(file, {});
+  const previous = index[row.id] || {};
+  const ctx = {
+    routeTitle: `Route ${row.route} — ${route?.route_long_name || ''}`.replace(/ — $/, ''),
+  };
+  if (job.kind === 'image') {
     const alt =
       row.source === 'bunching'
         ? bunchPost.buildAltText(evidence, ctx)
@@ -116,121 +141,101 @@ async function main() {
         : row.source === 'gap'
           ? gapPost.buildPostText(evidence, ctx)
           : description(row, evidence);
+    const baseUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
     const text = boundedPost(
       body,
       baseUrl ? `${baseUrl}/event/${encodeURIComponent(row.id)}` : null,
     );
-    let renderingVideo = false;
-    try {
-      if (!index[row.id]?.image_url) {
-        const image =
-          row.source === 'bunching'
-            ? await renderBunchingMap(evidence, shape, [], { title: ctx.routeTitle })
-            : row.source === 'gap'
-              ? await renderGapMap(evidence, shape, [], { title: ctx.routeTitle })
-              : row.source === 'cross-bunching'
-                ? await clusterImage(evidence, gtfs, shapes)
-                : await renderBusDisruptionMap(shape, {
-                    title: `${ctx.routeTitle}: ${row.source}`,
-                  });
-        atomic(path.join(dir, `${row.id}.jpg`), image);
-        index[row.id] = { image_url: `/data/media/${row.id}.jpg`, alt, created_at: now };
-        savePreview({ text, alt, image, key: row.id });
-        rendered++;
+    const diagnostics = await withRenderDiagnostics(() =>
+      row.source === 'bunching'
+        ? renderBunchingMap(evidence, shape, [], { title: ctx.routeTitle })
+        : row.source === 'gap'
+          ? renderGapMap(evidence, shape, [], { title: ctx.routeTitle })
+          : row.source === 'cross-bunching'
+            ? clusterImage(evidence, gtfs, shapes)
+            : renderBusDisruptionMap(shape, { title: `${ctx.routeTitle}: ${row.source}` }),
+    );
+    atomic(path.join(dir, `${row.id}.jpg`), diagnostics.value);
+    index[row.id] = {
+      ...previous,
+      image_url: `/data/media/${row.id}.jpg`,
+      alt,
+      created_at: previous.created_at || now,
+      ...metadata(diagnostics),
+    };
+    atomic(file, index);
+    savePreview({ text, alt, image: diagnostics.value, key: row.id });
+    return { quality: diagnostics.basemap, error: diagnostics.error };
+  }
+  const window = clipWindow(row, now);
+  const rows = db
+    .prepare(
+      'SELECT ts, vehicle_id AS vehicleId, trip_id AS tripId, route, lat, lon, speed FROM bus_observations WHERE route=? AND ts BETWEEN ? AND ? ORDER BY ts LIMIT 3000',
+    )
+    .all(row.route, window.start, window.end);
+  const capture =
+    row.source === 'bunching' ? captureBusBunchingHistoryVideo : captureBusGapHistoryVideo;
+  const diagnostics = await withRenderDiagnostics(() =>
+    capture(evidence, shape, rows, { gtfs, shapes }),
+  );
+  const video = diagnostics.value;
+  index[row.id] = {
+    ...previous,
+    created_at: previous.created_at || now,
+    video_checked: true,
+    video_basemap: diagnostics.basemap,
+    video_renderer_version: RENDER_VERSION,
+  };
+  if (video?.buffer) {
+    atomic(path.join(dir, `${row.id}.mp4`), video.buffer);
+    index[row.id].video_url = `/data/media/${row.id}.mp4`;
+  }
+  delete index[row.id].video_retry_after;
+  atomic(file, index);
+  return { quality: diagnostics.basemap || 'insufficient_history' };
+}
+
+async function main() {
+  const db = storage.getDb();
+  const queue = createMediaQueue(db);
+  const dir = path.join(process.env.TRANSIT_WEB_DIR, 'media');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const job = queue.claim();
+    if (job) {
+      try {
+        const result = await renderJob(job, db, dir);
+        queue.finish(job, result);
+        console.log(
+          `Media job ${job.key}: ${result.quality || 'complete'}${result.error ? ` (${result.error})` : ''}`,
+        );
+      } catch (error) {
+        const code = errorCode(error);
+        queue.finish(job, { error: code });
+        console.warn(`Media job ${job.key}: ${code}; attempt ${job.attempts}`);
       }
-      // One bounded clip per invocation. Browser replay stays available for all
-      // incidents independently of these optional encoded social-media clips.
-      if (
-        !index[row.id].video_url &&
-        !index[row.id].video_checked &&
-        now >= (index[row.id].video_retry_after || 0) &&
-        videoAttempts < 1 &&
-        now - row.first_seen > 5 * 60000 &&
-        ['bunching', 'gap'].includes(row.source)
-      ) {
-        videoAttempts++;
-        renderingVideo = true;
-        const window = clipWindow(row, now);
-        const rows = db
-          .prepare(
-            'SELECT ts, vehicle_id AS vehicleId, trip_id AS tripId, route, lat, lon, speed FROM bus_observations WHERE route=? AND ts BETWEEN ? AND ? ORDER BY ts LIMIT 3000',
-          )
-          .all(row.route, window.start, window.end);
-        const capture =
-          row.source === 'bunching' ? captureBusBunchingHistoryVideo : captureBusGapHistoryVideo;
-        const video = await capture(evidence, shape, rows, { gtfs, shapes });
-        if (video?.buffer) {
-          atomic(path.join(dir, `${row.id}.mp4`), video.buffer);
-          index[row.id].video_url = `/data/media/${row.id}.mp4`;
-          videos++;
-        }
-        index[row.id].video_checked = true;
-        delete index[row.id].video_retry_after;
-      }
-    } catch (error) {
-      // A failed street-map render must not poison the clip cache or repeatedly
-      // consume this run's one video attempt while other events are waiting.
-      if (renderingVideo) index[row.id].video_retry_after = now + 15 * 60000;
-      console.warn(`Media unavailable for ${row.id}: ${error.message}`);
     }
-  }
-  const payload = db.prepare("SELECT payload FROM local_analytics WHERE key='bus'").get();
-  const analytics = payload ? JSON.parse(payload.payload) : {};
-  let maps = 0;
-  for (const [kind, source, render] of [
-    ['speedmap', analytics.speedmaps, renderBusSpeedmap],
-    ['crowding', analytics.crowding, renderBusCrowdingMap],
-  ]) {
-    const chosen = new Map();
-    for (const [shapeId, result] of source || []) {
-      if (result.summary.covered / result.summary.bins < 0.3) continue;
-      if (
-        !chosen.has(result.route) ||
-        result.summary.covered > chosen.get(result.route).result.summary.covered
-      )
-        chosen.set(result.route, { shapeId, result });
+    const indexFile = path.join(dir, 'media-index.json');
+    const index = readJson(indexFile, {});
+    let pruned = false;
+    for (const [id, media] of Object.entries(index)) {
+      if (media.created_at >= Date.now() - 90 * 86400000) continue;
+      if (/^[\w.-]+$/.test(id))
+        for (const ext of ['jpg', 'mp4'])
+          fs.rmSync(path.join(dir, `${id}.${ext}`), { force: true });
+      delete index[id];
+      pruned = true;
     }
-    for (const [route, { shapeId, result }] of chosen) {
-      if (maps >= 4) break;
-      const key = `${kind}-${route}`;
-      if (now - (analyticsMedia[key]?.updated_at || 0) < 3600000) continue;
-      if (!/^[\w.-]+$/.test(key) || !shapes.has(shapeId)) continue;
-      const image = await render(shapes.get(shapeId), result.bins);
-      atomic(path.join(dir, `${key}.jpg`), image);
-      analyticsMedia[key] = {
-        route,
-        kind,
-        shape_id: shapeId,
-        image_url: `/data/media/${key}.jpg`,
-        updated_at: now,
-        generated_at: analytics.generated_at,
-        window_start: analytics.generated_at - 3600000,
-        window_end: analytics.generated_at,
-        summary: result.summary,
-        sample_count: result.sampleCount,
-        crowded_vehicle_count: result.crowdedVehicleCount ?? null,
-        coverage: result.summary.covered / result.summary.bins,
-      };
-      maps++;
-    }
+    if (pruned) atomic(indexFile, index);
+    atomic(path.join(process.env.TRANSIT_STATE_DIR, 'media-queue-health.json'), queue.summary());
+  } finally {
+    storage.closeDb();
   }
-  // Media is a bounded cache. Source incidents, receipts and structured replay
-  // retain their own independent history; removing a JPEG never erases events.
-  for (const [id, media] of Object.entries(index)) {
-    if (media.created_at >= now - 90 * 86400000) continue;
-    if (/^[\w.-]+$/.test(id))
-      for (const ext of ['jpg', 'mp4']) fs.rmSync(path.join(dir, `${id}.${ext}`), { force: true });
-    delete index[id];
-  }
-  atomic(indexFile, index);
-  atomic(analyticsFile, analyticsMedia);
-  storage.closeDb();
-  console.log(`Media: ${rendered} incident maps, ${videos} clips, ${maps} route maps`);
 }
 
 if (require.main === module)
   main().catch((error) => {
-    console.error(error.stack || error);
+    console.error(`Media worker failed: ${errorCode(error)}`);
     process.exitCode = 1;
   });
-module.exports = { main, boundedPost, clipWindow };
+module.exports = { main, renderJob, boundedPost, clipWindow };

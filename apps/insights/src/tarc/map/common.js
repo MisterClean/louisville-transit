@@ -4,6 +4,7 @@
 // metadata), and the video-only helpers (comet trail, clip progress/HUD pills,
 // ghost legend) — those return with the video phase.
 const sharp = require('sharp');
+const { errorCode, recordBasemap } = require('./diagnostics');
 
 const WIDTH = 1200;
 const HEIGHT = 1200;
@@ -160,18 +161,32 @@ function xmlEscape(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function renderStaticMap(spec, timeoutMs = 30000, renderBase = require('./protomaps').renderProtomaps, options = {}) {
+async function renderStaticMap(
+  spec,
+  timeoutMs = 30000,
+  renderBase = require('./protomaps').renderProtomaps,
+  options = {},
+) {
   if (process.env.PROTOMAPS_KEY) {
     try {
-      return await renderBase(spec, process.env.PROTOMAPS_KEY, timeoutMs);
-    } catch {
+      const image = await renderBase(spec, process.env.PROTOMAPS_KEY, timeoutMs);
+      recordBasemap('street');
+      return image;
+    } catch (error) {
+      const code = errorCode(error);
+      recordBasemap('degraded', code);
       // Never log provider errors: request URLs can contain the API key.
       // A video is cached and published once, so retry its render on a later
       // media run instead of permanently publishing a transient fallback.
-      if (options.requireBasemap) throw new Error('Protomaps street basemap unavailable; video will retry');
-      console.warn('Street basemap unavailable; using labeled route geometry');
+      if (options.requireBasemap) {
+        const failure = new Error('Protomaps street basemap unavailable; video will retry');
+        failure.code = code;
+        throw failure;
+      }
+      console.warn(`Street basemap unavailable (${code}); using labeled route geometry`);
     }
   }
+  if (!process.env.PROTOMAPS_KEY) recordBasemap('geometry');
   return require('./geometryBase').renderGeometryBase(spec);
 }
 
