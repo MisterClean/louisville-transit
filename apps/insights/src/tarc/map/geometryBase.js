@@ -28,7 +28,16 @@ function decodePolyline(encoded) {
   return points;
 }
 
-function mapGeometry({ overlays = [], centerLon, centerLat, zoom, width = 1200, height = 1200, scale = 2, padding = 60 }) {
+function mapGeometry({
+  overlays = [],
+  centerLon,
+  centerLat,
+  zoom,
+  width = 1200,
+  height = 1200,
+  scale = 1,
+  padding = 60,
+}) {
   if (width < 1 || height < 1 || width > 1280 || height > 1280 || scale < 1 || scale > 2) {
     throw new Error('Map exceeds pixel budget');
   }
@@ -56,10 +65,14 @@ function mapGeometry({ overlays = [], centerLon, centerLat, zoom, width = 1200, 
     zoom = Math.min(17, fitZoom(bbox, width, height, padding));
   }
   if (![centerLon, centerLat, zoom].every(Number.isFinite)) throw new Error('Invalid map viewport');
-  const lines = paths.map((path) => {
-    const pixels = path.points.map((point) => project(point.lat, point.lon, centerLat, centerLon, zoom, width, height));
-    return `<polyline points="${pixels.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')}" fill="none" stroke="#${path.color}" stroke-width="${path.stroke}" opacity="${path.opacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
-  }).join('');
+  const lines = paths
+    .map((path) => {
+      const pixels = path.points.map((point) =>
+        project(point.lat, point.lon, centerLat, centerLon, zoom, width, height),
+      );
+      return `<polyline points="${pixels.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')}" fill="none" stroke="#${path.color}" stroke-width="${path.stroke}" opacity="${path.opacity}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    })
+    .join('');
   return { width, height, scale, centerLon, centerLat, zoom, lines };
 }
 
@@ -68,7 +81,9 @@ function overlaySvg(geometry, credited) {
   const credit = credited
     ? `<rect x="${width - 302}" y="${height - 40}" width="302" height="40" fill="#111b27" fill-opacity="0.88"/><text x="${width - 288}" y="${height - 14}" font-family="Arial,sans-serif" font-size="17" fill="#f1f5f8">© OpenStreetMap · Protomaps</text>`
     : '';
-  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}">${lines}${credit}</svg>`);
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}">${lines}${credit}</svg>`,
+  );
 }
 
 async function renderGeometryBase(spec) {

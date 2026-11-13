@@ -5,6 +5,7 @@ const { readFileSync } = require('node:fs');
 const { chromium } = require('playwright');
 const sharp = require('sharp');
 const { mapGeometry, overlaySvg } = require('./geometryBase');
+const { cachedBasemap } = require('./basemapCache');
 
 // MapLibre 6 ships ES modules. Keep their imports and worker on this local origin.
 const maplibreAssets = new Map(
@@ -39,10 +40,21 @@ async function startMapServer() {
 async function renderProtomaps(spec, key, timeoutMs = 30000) {
   const geometry = mapGeometry(spec);
   const style = STYLES.has(process.env.PROTOMAPS_STYLE) ? process.env.PROTOMAPS_STYLE : 'light';
+  const base = await cachedBasemap(geometry, style, () =>
+    renderBrowserBase(geometry, style, key, timeoutMs),
+  );
+  return sharp(base)
+    .composite([{ input: overlaySvg(geometry, true) }])
+    .png()
+    .toBuffer();
+}
+
+async function renderBrowserBase(geometry, style, key, timeoutMs) {
   const { server, url } = await startMapServer();
   let browser;
   let page;
   let timer;
+  let resourceStatus;
   try {
     browser = await chromium.launch({
       timeout: timeoutMs,
@@ -60,6 +72,9 @@ async function renderProtomaps(spec, key, timeoutMs = 30000) {
     page = await browser.newPage({
       viewport: { width: geometry.width, height: geometry.height },
       deviceScaleFactor: geometry.scale,
+    });
+    page.on('response', (response) => {
+      if (response.status() >= 400) resourceStatus = response.status();
     });
     page.setDefaultTimeout(timeoutMs);
     page.setDefaultNavigationTimeout(timeoutMs);
@@ -89,11 +104,10 @@ async function renderProtomaps(spec, key, timeoutMs = 30000) {
         timer = setTimeout(() => reject(new Error('Protomaps render timed out')), timeoutMs);
       }),
     ]);
-    const base = await page.screenshot({ type: 'png' });
-    return sharp(base)
-      .composite([{ input: overlaySvg(geometry, true) }])
-      .png()
-      .toBuffer();
+    return await page.screenshot({ type: 'png' });
+  } catch (error) {
+    if (resourceStatus) throw new Error(`Protomaps http_${resourceStatus}`);
+    throw error;
   } finally {
     clearTimeout(timer);
     await closeResources(page, browser, server);

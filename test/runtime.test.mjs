@@ -393,10 +393,13 @@ test("relative runtime directories remain absolute when producer child cwd chang
 	}
 });
 
-test("optional failures back off while critical collection continues", async () => {
-	const { createCollectorCycle } = await import("../scripts/server.mjs");
+test("collection only enqueues media; optional failures back off independently", async () => {
+	const { createCollectorCycle, createBackgroundCycle } = await import(
+		"../scripts/server.mjs"
+	);
 	let now = 1000000;
 	const calls = [];
+	const paths = { exportDir: "/nonexistent", stateDir: "/nonexistent" };
 	const health = () => ({
 		status: "ok",
 		sources: Object.fromEntries(
@@ -406,25 +409,93 @@ test("optional failures back off while critical collection continues", async () 
 			]),
 		),
 	});
-	const collect = createCollectorCycle(
-		{ exportDir: "/nonexistent", stateDir: "/nonexistent" },
-		{ now: () => now, readHealth: async () => health() },
-	);
+	const collect = createCollectorCycle(paths, {
+		now: () => now,
+		readHealth: async () => health(),
+	});
+	const background = createBackgroundCycle(paths, { now: () => now });
 	const run = async (name) => {
 		calls.push(name);
 		if (["media", "publish", "archive"].includes(name))
 			throw new Error("resource unavailable");
 	};
 	assert.equal((await collect(run)).status, "ok");
-	assert.ok(calls.indexOf("export") < calls.indexOf("media"));
+	assert.deepEqual(calls, [
+		"initialize",
+		"observe",
+		"detect",
+		"export",
+		"artifacts",
+		"media-enqueue",
+	]);
 	calls.length = 0;
+	await background(run);
+	assert.deepEqual(calls, ["media", "publish", "archive"]);
+	calls.length = 0;
+	await background(run);
+	assert.deepEqual(calls, []);
 	now += 30000;
 	await collect(run);
-	assert.deepEqual(calls, ["observe", "detect", "export", "artifacts"]);
-	now += 600000;
+	assert.deepEqual(calls, [
+		"observe",
+		"detect",
+		"export",
+		"artifacts",
+		"media-enqueue",
+	]);
 	calls.length = 0;
-	await collect(run);
-	assert.ok(calls.includes("media"));
+	await background(run);
+	assert.deepEqual(calls, ["media"]);
+});
+
+test("slow background child does not delay observations and shutdown terminates it", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "tarc-background-"));
+	const previous = process.env.POLL_INTERVAL_MS;
+	process.env.POLL_INTERVAL_MS = "15";
+	const script = path.join(dir, "render.cjs");
+	await writeFile(script, "setInterval(()=>{},1000)");
+	let jobs = 0;
+	const runtime = createRuntime({
+		dataDir: dir,
+		backgroundIntervalMs: 5,
+		cycle: async () => ({
+			sources: Object.fromEntries(
+				["vehicles", "trip_updates", "alerts"].map((name) => [
+					name,
+					{ source_timestamp: Date.now() },
+				]),
+			),
+		}),
+		background: async (run) => {
+			jobs++;
+			await run("media", script, 10000);
+		},
+	});
+	try {
+		await runtime.start();
+		for (let i = 0; i < 100 && runtime.state.cycles < 4; i++)
+			await new Promise((r) => setTimeout(r, 10));
+		assert.ok(
+			runtime.state.cycles >= 4,
+			"collection continues during the render",
+		);
+		assert.equal(runtime.state.background_running, "media");
+		assert.equal(jobs, 1, "background jobs never overlap");
+		const start = Date.now();
+		await runtime.stop();
+		assert.ok(Date.now() - start < 6000, "shutdown stops the active render");
+		assert.equal(runtime.state.background_running, null);
+		assert.equal(
+			runtime.state.failures,
+			0,
+			"render termination does not fail collection",
+		);
+	} finally {
+		await runtime.stop();
+		if (previous === undefined) delete process.env.POLL_INTERVAL_MS;
+		else process.env.POLL_INTERVAL_MS = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
 });
 
 test("failed observation exports failure state and skips optional work", async () => {

@@ -92,9 +92,11 @@ export function createRuntime(options = {}) {
 		jobs: {},
 	};
 	let stopped = false,
-		child,
 		timer,
-		activeCycle;
+		activeCycle,
+		backgroundTimer,
+		activeBackground;
+	const children = new Set();
 	const killJob = (processHandle, signal) => {
 		if (!processHandle?.pid) return;
 		try {
@@ -150,8 +152,12 @@ export function createRuntime(options = {}) {
 			}
 			if (raw === "/metrics") {
 				res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
+				const oomKills = Number(
+					state.resources?.["memory.events"]?.match(/^oom_kill (\d+)$/m)?.[1] ||
+						0,
+				);
 				return res.end(
-					`tarc_cycles_total ${state.cycles}\ntarc_failures_total ${state.failures}\ntarc_last_success_timestamp_seconds ${(state.last_success_at || 0) / 1000}\ntarc_job_running ${state.running ? 1 : 0}\nprocess_resident_memory_bytes ${process.memoryUsage().rss}\nprocess_uptime_seconds ${process.uptime()}\n`,
+					`tarc_media_queue_pending ${state.media_queue?.pending || 0}\ntarc_media_queue_failed ${state.media_queue?.failed || 0}\ntarc_cgroup_oom_kills_total ${oomKills}\ntarc_cycles_total ${state.cycles}\ntarc_failures_total ${state.failures}\ntarc_last_success_timestamp_seconds ${(state.last_success_at || 0) / 1000}\ntarc_job_running ${state.running ? 1 : 0}\nprocess_resident_memory_bytes ${process.memoryUsage().rss}\nprocess_uptime_seconds ${process.uptime()}\n`,
 				);
 			}
 			if (req.method === "OPTIONS" && raw.startsWith("/data/positions/")) {
@@ -335,13 +341,17 @@ export function createRuntime(options = {}) {
 		script,
 		timeoutMs = 240000,
 		cwd = path.join(root, "apps/insights"),
+		lane = "running",
 	) {
 		if (stopped) return;
-		state.running = name;
+		state[lane] = name;
+		// Schedule refresh replaces files read by media; finish that job first.
+		if (name === "initialize") await activeBackground;
+		if (stopped) return;
 		state.jobs[name] = { started_at: Date.now() };
 		try {
 			await new Promise((resolve, reject) => {
-				child = spawn(
+				const job = spawn(
 					process.execPath,
 					[
 						...(name === "media"
@@ -375,7 +385,7 @@ export function createRuntime(options = {}) {
 						detached: process.platform !== "win32",
 					},
 				);
-				const job = child;
+				children.add(job);
 				let timedOut = false;
 				let force;
 				const timeout = setTimeout(() => {
@@ -384,17 +394,17 @@ export function createRuntime(options = {}) {
 					force = setTimeout(() => killJob(job, "SIGKILL"), 5000);
 					force.unref();
 				}, timeoutMs);
-				child.once("error", (error) => {
+				job.once("error", (error) => {
 					clearTimeout(timeout);
-					child = undefined;
+					children.delete(job);
 					reject(error);
 				});
-				child.once("exit", (code, signal) => {
+				job.once("exit", (code, signal) => {
 					clearTimeout(timeout);
 					clearTimeout(force);
 					// Reap surviving descendants even after a successful parent exit.
 					if (process.platform !== "win32") killJob(job, "SIGKILL");
-					child = undefined;
+					children.delete(job);
 					code === 0 && !timedOut
 						? resolve()
 						: reject(
@@ -409,7 +419,7 @@ export function createRuntime(options = {}) {
 			state.jobs[name].error = error.message;
 			throw error;
 		} finally {
-			state.running = null;
+			state[lane] = null;
 		}
 	}
 	async function cycle() {
@@ -419,7 +429,15 @@ export function createRuntime(options = {}) {
 			const disk = await statfs(dataDir);
 			state.resources = { rss_bytes: process.memoryUsage().rss };
 			if (process.platform === "linux") {
-				for (const metric of ["pids.current", "pids.max", "pids.events"]) {
+				for (const metric of [
+					"pids.current",
+					"pids.max",
+					"pids.events",
+					"memory.current",
+					"memory.peak",
+					"memory.max",
+					"memory.events",
+				]) {
 					try {
 						state.resources[metric] = (
 							await readFile(`/sys/fs/cgroup/${metric}`, "utf8")
@@ -444,6 +462,7 @@ export function createRuntime(options = {}) {
 			if (result?.sources) state.sources = result.sources;
 			if (!options.cycle) throw new Error("Producer commands not configured");
 			if (stopped) return;
+			state.last_cycle_duration_ms = Date.now() - startedAt;
 			state.last_success_at = Date.now();
 			state.last_error = null;
 			state.cycles++;
@@ -468,6 +487,37 @@ export function createRuntime(options = {}) {
 				);
 		}
 	}
+	async function background() {
+		try {
+			if (health().status === "healthy" && state.running !== "initialize") {
+				await options.background?.((name, script, timeout, cwd) =>
+					runJob(name, script, timeout, cwd, "background_running"),
+				);
+				try {
+					state.media_queue = JSON.parse(
+						await readFile(
+							path.join(stateDir, "media-queue-health.json"),
+							"utf8",
+						),
+					);
+				} catch (error) {
+					if (error.code !== "ENOENT")
+						console.error("[media queue health]", error.message);
+				}
+			}
+		} catch (error) {
+			console.error("[background]", error.message);
+		} finally {
+			if (!stopped)
+				backgroundTimer = setTimeout(
+					launchBackground,
+					options.backgroundIntervalMs ?? 5000,
+				);
+		}
+	}
+	function launchBackground() {
+		activeBackground = background();
+	}
 	function launchCycle() {
 		activeCycle = cycle().catch(console.error);
 	}
@@ -479,16 +529,20 @@ export function createRuntime(options = {}) {
 		start: async () => {
 			await mkdir(exportDir, { recursive: true });
 			launchCycle();
+			if (options.background) launchBackground();
 		},
 		stop: async () => {
 			stopped = true;
 			clearTimeout(timer);
-			const activeChild = child;
-			killJob(activeChild, "SIGTERM");
-			const force = setTimeout(() => killJob(activeChild, "SIGKILL"), 5000);
+			clearTimeout(backgroundTimer);
+			const activeChildren = [...children];
+			for (const job of activeChildren) killJob(job, "SIGTERM");
+			const force = setTimeout(() => {
+				for (const job of activeChildren) killJob(job, "SIGKILL");
+			}, 5000);
 			force.unref();
 			await new Promise((resolve) => server.close(resolve));
-			await activeCycle;
+			await Promise.all([activeCycle, activeBackground]);
 			clearTimeout(force);
 		},
 	};
@@ -504,22 +558,6 @@ export function createCollectorCycle(paths, options = {}) {
 	let nextGtfs = 0;
 	let gtfsError;
 	let gtfsFailures = 0;
-	const optionalState = new Map();
-	async function optional(run, name, script, interval, timeout) {
-		const state = optionalState.get(name) || { next: 0, failures: 0 };
-		if (now() < state.next) return;
-		try {
-			await run(name, script, timeout);
-			state.failures = 0;
-		} catch (error) {
-			state.failures++;
-			console.error("[optional job]", name, error.message);
-		} finally {
-			state.next =
-				now() + Math.min(3600000, interval * 2 ** Math.min(state.failures, 4));
-			optionalState.set(name, state);
-		}
-	}
 	return async (run) => {
 		if (now() >= nextGtfs) {
 			try {
@@ -570,9 +608,35 @@ export function createCollectorCycle(paths, options = {}) {
 			})
 		)
 			throw new Error("Required source feeds stale after processing");
-		// Optional jobs are bounded, observable in jobs[], and retried with backoff.
-		// They never prevent fresh observation/export from completing.
-		await optional(run, "media", "scripts/runtime/media.js", 300000, 120000);
+		// Enqueue only: Chromium/FFmpeg never run on the collection lane.
+		try {
+			await run("media-enqueue", "scripts/runtime/media-enqueue.js", 30000);
+		} catch (error) {
+			console.error("[media enqueue]", error.message);
+		}
+		return health;
+	};
+}
+export function createBackgroundCycle(paths, options = {}) {
+	const now = options.now || Date.now;
+	const optionalState = new Map();
+	async function optional(run, name, script, interval, timeout) {
+		const state = optionalState.get(name) || { next: 0, failures: 0 };
+		if (now() < state.next) return;
+		try {
+			await run(name, script, timeout);
+			state.failures = 0;
+		} catch (error) {
+			state.failures++;
+			console.error("[optional job]", name, error.message);
+		} finally {
+			state.next =
+				now() + Math.min(3600000, interval * 2 ** Math.min(state.failures, 4));
+			optionalState.set(name, state);
+		}
+	}
+	return async (run) => {
+		await optional(run, "media", "scripts/runtime/media.js", 5000, 120000);
 		await optional(run, "publish", "scripts/runtime/publish.js", 300000, 60000);
 		await optional(
 			run,
@@ -591,14 +655,17 @@ export function createCollectorCycle(paths, options = {}) {
 				console.error("[media cleanup]", error.message);
 			}
 		}
-		return health;
 	};
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	await stat(path.join(root, "apps/alerts/dist/index.html"));
 	let runtime;
-	runtime = createRuntime({ cycle: (run) => collect(run) });
+	runtime = createRuntime({
+		cycle: (run) => collect(run),
+		background: (run) => work(run),
+	});
 	const collect = createCollectorCycle(runtime.paths);
+	const work = createBackgroundCycle(runtime.paths);
 
 	runtime.server.listen(Number(process.env.PORT || 3100), "0.0.0.0", () => {
 		console.log(`TARC listening on ${process.env.PORT || 3100}`);
