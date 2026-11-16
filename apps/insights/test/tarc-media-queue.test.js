@@ -9,6 +9,7 @@ const {
   LEASE_MS,
   MAX_ATTEMPTS,
   RENDER_VERSION,
+  stillRenderVersion,
 } = require('../src/tarc/mediaQueue');
 const { enqueueMedia } = require('../scripts/runtime/media-enqueue');
 
@@ -118,9 +119,64 @@ test('enqueue repairs unversioned images without deleting cached media or postin
     );
     assert.equal(
       db.prepare("SELECT revision FROM media_jobs WHERE key='image:gap-01'").get().revision,
-      String(RENDER_VERSION),
+      `${stillRenderVersion('gap')}:${process.env.PROTOMAPS_KEY ? 'street' : 'geometry'}`,
     );
     assert.equal(db.prepare('SELECT count(*) AS n FROM receipts').get().n, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'media-index.json'))), index);
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('retained map repairs reach past the newest 200 events and respect their own queue cap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tarc-repair-maps-'));
+  const db = new Database(':memory:');
+  try {
+    db.exec(
+      'CREATE TABLE local_events(id TEXT, source TEXT, first_seen INTEGER); CREATE TABLE local_analytics(key TEXT, payload TEXT);',
+    );
+    const insert = db.prepare('INSERT INTO local_events VALUES (?, ?, ?)');
+    const index = {};
+    for (let i = 0; i < 10; i++) {
+      const id = `archived-gap-${i}`;
+      insert.run(id, 'gap', i + 1);
+      index[id] = {
+        image_url: `/data/media/${id}.jpg`,
+        video_url: `/data/media/${id}.mp4`,
+        ...(i === 0 ? { renderer_version: RENDER_VERSION, basemap: 'street' } : {}),
+      };
+    }
+    for (let i = 0; i < 200; i++) {
+      const id = `recent-bunching-${i}`;
+      insert.run(id, 'bunching', i + 100);
+      index[id] = {
+        image_url: `/data/media/${id}.jpg`,
+        renderer_version: RENDER_VERSION,
+        basemap: 'street',
+      };
+    }
+    insert.run('new-incident', 'bunching', 400);
+    fs.writeFileSync(path.join(dir, 'media-index.json'), JSON.stringify(index));
+
+    enqueueMedia(db, dir, 500);
+    enqueueMedia(db, dir, 501);
+    const queue = createMediaQueue(db);
+    const repairs = db.prepare("SELECT key FROM media_jobs WHERE key LIKE 'image:archived-%'");
+    assert.equal(repairs.all().length, 8);
+    const fresh = queue.claim(501);
+    assert.equal(fresh.key, 'image:new-incident');
+    queue.finish(fresh, { quality: 'street' }, 501);
+
+    for (let i = 0; i < 2; i++) {
+      const repaired = queue.claim(501);
+      assert.match(repaired.key, /^image:archived-gap-/);
+      queue.finish(repaired, { quality: 'street' }, 501);
+    }
+    enqueueMedia(db, dir, 502);
+    assert.equal(repairs.all().length, 10);
+    assert.equal(queue.summary().pending, 8);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM media_jobs WHERE kind='video'").get().n, 0);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'media-index.json'))), index);
   } finally {
     db.close();

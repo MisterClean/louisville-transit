@@ -284,13 +284,17 @@ async function main(options = {}) {
         root: { uri: root.uri, cid: root.cid },
         parent: { uri: root.uri, cid: root.cid },
       };
-      const video = mediaFile(media[event.id]?.video_url, webDir);
+      const entry = media[event.id];
+      const video =
+        (!requireStreet || entry?.video_basemap === 'street') &&
+        mediaFile(entry?.video_url, webDir);
       if (video)
         enqueue(event, 'video', root.account, {
           text: 'Observed vehicle movement during this event.',
-          alt: media[event.id]?.video_alt || 'Replay of recorded TARC vehicle positions.',
+          alt: entry.video_alt || 'Replay of recorded TARC vehicle positions.',
           media: video,
           kind: 'video',
+          basemap: entry.video_basemap,
           reply: ref,
         });
       if (event.lifecycle?.resolved_ts && !cancellation(event))
@@ -315,30 +319,34 @@ async function main(options = {}) {
     for (const row of rows) {
       if (attempted >= 3) break;
       const payload = JSON.parse(row.payload);
-      if (row.part === 'root') {
-        // Only retire roots that cannot already exist at Bluesky. Attempted
-        // deliveries still reconcile with their original payload and identity.
-        if (row.attempts === 0) {
-          const facts = payload.facts;
-          const mapAnalytics = ['speedmap', 'crowding'].includes(facts.analytics?.kind);
-          const expired = mapAnalytics
+      // Attempted deliveries may already exist remotely. Reconcile them with
+      // the original payload and identity, including replies.
+      if (row.attempts === 0) {
+        const facts = payload.facts;
+        const mapAnalytics = ['speedmap', 'crowding'].includes(facts.analytics?.kind);
+        const expired =
+          row.part === 'root' &&
+          (mapAnalytics
             ? facts.analytics.generated_at < now - MAP_MAX_AGE_MS
             : payload.kind === 'image' &&
               isObservation(facts) &&
-              facts.lifecycle?.first_seen_ts < now - OBSERVATION_MAX_AGE_MS;
-          const unverified =
-            requireStreet && payload.kind === 'image' && payload.basemap !== 'street';
-          const reason = expired ? 'publication_expired' : unverified ? 'unverified_basemap' : null;
-          if (reason) {
-            const { changes } = db
-              .prepare(
-                "UPDATE runtime_outbox SET status='skipped',last_error=? WHERE event_id=? AND part='root' AND status='pending' AND attempts=0",
-              )
-              .run(reason, row.event_id);
-            if (changes && payload.media) fs.rmSync(payload.media, { force: true });
-            continue;
-          }
+              facts.lifecycle?.first_seen_ts < now - OBSERVATION_MAX_AGE_MS);
+        const unverified =
+          requireStreet &&
+          ['image', 'video'].includes(payload.kind) &&
+          payload.basemap !== 'street';
+        const reason = expired ? 'publication_expired' : unverified ? 'unverified_basemap' : null;
+        if (reason) {
+          const { changes } = db
+            .prepare(
+              "UPDATE runtime_outbox SET status='skipped',last_error=? WHERE event_id=? AND part=? AND status='pending' AND attempts=0",
+            )
+            .run(reason, row.event_id, row.part);
+          if (changes && payload.media) fs.rmSync(payload.media, { force: true });
+          continue;
         }
+      }
+      if (row.part === 'root') {
         const prior = db
           .prepare(
             "SELECT route,COALESCE(sent_at,attempted_at,created_at) timestamp FROM runtime_outbox WHERE part='root' AND event_id!=? AND (status='sent' OR attempts>0) AND COALESCE(sent_at,attempted_at,created_at)>=?",
