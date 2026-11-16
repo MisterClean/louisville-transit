@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const sharp = require('sharp');
 
 const { computeGapView, renderGapFrame } = require('../../src/tarc/map/busGap');
+const { WIDTH, HEIGHT } = require('../../src/tarc/map/common');
+const { project } = require('../../src/shared/projection');
 
 // A straight north–south shape, 0 → ~10560 ft, with per-vertex distFt so the
 // gap view can slice it. Coordinates are arbitrary downtown-Louisville-ish points.
@@ -46,6 +48,18 @@ const isJpeg = (buf) => Buffer.isBuffer(buf) && buf[0] === 0xff && buf[1] === 0x
 
 test('still gap frame renders flank-stop pins + labels', async () => {
   const view = computeGapView(gap, syntheticShape());
+  for (const point of [gap.leading, gap.trailing, gap.flankBefore, gap.flankAfter]) {
+    const { y } = project(
+      point.lat,
+      point.lon,
+      view.centerLat,
+      view.centerLon,
+      view.zoom,
+      WIDTH,
+      HEIGHT,
+    );
+    assert.ok(y > 128 && y < HEIGHT - 100, 'gap markers clear the title and attribution');
+  }
   const base = await blankBase();
   const out = await renderGapFrame(view, base, gap, [], {
     title: 'Route 20 — Doraville',

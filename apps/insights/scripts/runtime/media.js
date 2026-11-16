@@ -75,15 +75,19 @@ async function clusterImage(evidence, gtfs, shapes) {
   });
 }
 
-const { createMediaQueue, RENDER_VERSION } = require('../../src/tarc/mediaQueue');
+const {
+  createMediaQueue,
+  stillRenderVersion,
+  RENDER_VERSION,
+} = require('../../src/tarc/mediaQueue');
 const { withRenderDiagnostics, errorCode } = require('../../src/tarc/map/diagnostics');
 
 async function renderJob(job, db, dir) {
   const now = Date.now();
   const gtfs = loadGtfs(process.env.TARC_GTFS_DIR);
   const shapes = loadShapes(process.env.TARC_GTFS_DIR);
-  const metadata = (diagnostics) => ({
-    renderer_version: RENDER_VERSION,
+  const metadata = (diagnostics, version = RENDER_VERSION) => ({
+    renderer_version: version,
     basemap: diagnostics.basemap,
     render_error: diagnostics.error,
     rendered_at: now,
@@ -95,6 +99,8 @@ async function renderJob(job, db, dir) {
     const diagnostics = await withRenderDiagnostics(() => render(shapes.get(shapeId), result.bins));
     const file = path.join(dir, 'analytics-media.json');
     const index = readJson(file, {});
+    if (diagnostics.basemap === 'degraded' && index[job.key]?.basemap === 'street')
+      return { quality: diagnostics.basemap, error: diagnostics.error };
     atomic(path.join(dir, `${job.key}.jpg`), diagnostics.value);
     index[job.key] = {
       route,
@@ -155,13 +161,15 @@ async function renderJob(job, db, dir) {
             ? clusterImage(evidence, gtfs, shapes)
             : renderBusDisruptionMap(shape, { title: `${ctx.routeTitle}: ${row.source}` }),
     );
+    if (diagnostics.basemap === 'degraded' && previous.basemap === 'street')
+      return { quality: diagnostics.basemap, error: diagnostics.error };
     atomic(path.join(dir, `${row.id}.jpg`), diagnostics.value);
     index[row.id] = {
       ...previous,
       image_url: `/data/media/${row.id}.jpg`,
       alt,
       created_at: previous.created_at || now,
-      ...metadata(diagnostics),
+      ...metadata(diagnostics, stillRenderVersion(row.source)),
     };
     atomic(file, index);
     savePreview({ text, alt, image: diagnostics.value, key: row.id });

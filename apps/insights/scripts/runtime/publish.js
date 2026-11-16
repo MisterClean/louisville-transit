@@ -4,8 +4,11 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 const bluesky = require('../../src/tarc/shared/bluesky');
-const { analyticsCandidates } = require('./analytics-publications');
+const { analyticsCandidates, MAP_MAX_AGE_MS } = require('./analytics-publications');
 const { publishingEnabled } = require('../../src/tarc/shared/delivery');
+
+const OBSERVATION_MAX_AGE_MS = 15 * 60000;
+const IMAGE_WAIT_MS = 5 * 60000;
 
 function schema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS publisher_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -63,6 +66,9 @@ function accountFor(event, observationAccount) {
 function cancellation(event) {
   return (event.detections || []).some((detection) => detection.source === 'cancellation');
 }
+function isObservation(event) {
+  return !event.official_alert && !cancellation(event) && !event.analytics;
+}
 function describe(event) {
   return (
     event.official_alert?.headline ||
@@ -90,6 +96,9 @@ async function main(options = {}) {
   const events = (options.events || read('alerts.json').incidents || []).filter(
     (e) => e.mode === 'bus',
   );
+  const requireStreet = Boolean(process.env.PROTOMAPS_KEY);
+  const imageFor = (entry) =>
+    (!requireStreet || entry?.basemap === 'street') && mediaFile(entry?.image_url, webDir);
   let media = options.media;
   if (!media) {
     try {
@@ -181,7 +190,16 @@ async function main(options = {}) {
         if (
           (!event.lifecycle?.active && !cancellation(event)) ||
           event.lifecycle.first_seen_ts < enabledAt ||
-          event.lifecycle.first_seen_ts < now - 900000
+          event.lifecycle.first_seen_ts < now - OBSERVATION_MAX_AGE_MS
+        )
+          continue;
+        const entry = media[event.id];
+        const image = imageFor(entry);
+        if (
+          requireStreet &&
+          isObservation(event) &&
+          !image &&
+          event.lifecycle.first_seen_ts > now - IMAGE_WAIT_MS
         )
           continue;
         const publicUrl = process.env.PUBLIC_URL || process.env.PUBLIC_BASE_URL;
@@ -190,14 +208,17 @@ async function main(options = {}) {
           : '';
         enqueue(event, 'root', account, {
           text: textLimit(describe(event), Math.max(0, 295 - [...link].length)) + link,
-          alt: media[event.id]?.alt || describe(event),
-          media: mediaFile(media[event.id]?.image_url, webDir),
-          kind: mediaFile(media[event.id]?.image_url, webDir) ? 'image' : 'text',
+          alt: (image && entry.alt) || describe(event),
+          media: image || null,
+          kind: image ? 'image' : 'text',
+          basemap: image ? entry.basemap : undefined,
         });
       }
     }
     const history = db
-      .prepare("SELECT payload,created_at FROM runtime_outbox WHERE part='root' AND created_at>=?")
+      .prepare(
+        "SELECT payload,created_at FROM runtime_outbox WHERE part='root' AND status!='skipped' AND created_at>=?",
+      )
       .all(now - 86400000)
       .map((row) => {
         const facts = JSON.parse(row.payload).facts;
@@ -208,7 +229,9 @@ async function main(options = {}) {
         };
       });
     for (const candidate of analyticsCandidates({
-      media: analyticsMedia,
+      media: Object.fromEntries(
+        Object.entries(analyticsMedia).filter(([, entry]) => imageFor(entry)),
+      ),
       analytics,
       enabledAt,
       now,
@@ -224,6 +247,7 @@ async function main(options = {}) {
         alt: candidate.alt,
         kind: image ? 'image' : 'text',
         media: image,
+        basemap: candidate.basemap,
       });
     }
     // Schedule replies independently after their root receipt is durably known.
@@ -260,13 +284,17 @@ async function main(options = {}) {
         root: { uri: root.uri, cid: root.cid },
         parent: { uri: root.uri, cid: root.cid },
       };
-      const video = mediaFile(media[event.id]?.video_url, webDir);
+      const entry = media[event.id];
+      const video =
+        (!requireStreet || entry?.video_basemap === 'street') &&
+        mediaFile(entry?.video_url, webDir);
       if (video)
         enqueue(event, 'video', root.account, {
           text: 'Observed vehicle movement during this event.',
-          alt: media[event.id]?.video_alt || 'Replay of recorded TARC vehicle positions.',
+          alt: entry.video_alt || 'Replay of recorded TARC vehicle positions.',
           media: video,
           kind: 'video',
+          basemap: entry.video_basemap,
           reply: ref,
         });
       if (event.lifecycle?.resolved_ts && !cancellation(event))
@@ -290,6 +318,34 @@ async function main(options = {}) {
       .all();
     for (const row of rows) {
       if (attempted >= 3) break;
+      const payload = JSON.parse(row.payload);
+      // Attempted deliveries may already exist remotely. Reconcile them with
+      // the original payload and identity, including replies.
+      if (row.attempts === 0) {
+        const facts = payload.facts;
+        const mapAnalytics = ['speedmap', 'crowding'].includes(facts.analytics?.kind);
+        const expired =
+          row.part === 'root' &&
+          (mapAnalytics
+            ? facts.analytics.generated_at < now - MAP_MAX_AGE_MS
+            : payload.kind === 'image' &&
+              isObservation(facts) &&
+              facts.lifecycle?.first_seen_ts < now - OBSERVATION_MAX_AGE_MS);
+        const unverified =
+          requireStreet &&
+          ['image', 'video'].includes(payload.kind) &&
+          payload.basemap !== 'street';
+        const reason = expired ? 'publication_expired' : unverified ? 'unverified_basemap' : null;
+        if (reason) {
+          const { changes } = db
+            .prepare(
+              "UPDATE runtime_outbox SET status='skipped',last_error=? WHERE event_id=? AND part=? AND status='pending' AND attempts=0",
+            )
+            .run(reason, row.event_id, row.part);
+          if (changes && payload.media) fs.rmSync(payload.media, { force: true });
+          continue;
+        }
+      }
       if (row.part === 'root') {
         const prior = db
           .prepare(
@@ -305,13 +361,12 @@ async function main(options = {}) {
         )
           continue;
       }
-      const payload = JSON.parse(row.payload),
-        key = {
-          publisher: 'tarc-runtime-v1',
-          account: row.account,
-          event: row.event_id,
-          part: row.part,
-        };
+      const key = {
+        publisher: 'tarc-runtime-v1',
+        account: row.account,
+        event: row.event_id,
+        part: row.part,
+      };
       db.prepare(
         'UPDATE runtime_outbox SET attempts=attempts+1,attempted_at=COALESCE(attempted_at,?) WHERE event_id=? AND part=?',
       ).run(now, row.event_id, row.part);

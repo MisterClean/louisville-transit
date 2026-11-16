@@ -35,6 +35,8 @@ const TERMINAL_MARKER_RADIUS = BUS_MARKER_RADIUS;
 const STOP_MARKER_SIZE = 32;
 const HIGHLIGHT_COLOR = '#ffb020';
 const CONTEXT_PAD_FT = 1800;
+const STILL_PADDING = 155;
+const MAP_FOOTER_HEIGHT = 42;
 
 function gapVehicles(gap) {
   return [
@@ -116,7 +118,11 @@ function computeGapView(gap, shape, extraPoints = [], opts = {}) {
   };
   const centerLat = (bbox.minLat + bbox.maxLat) / 2;
   const centerLon = (bbox.minLon + bbox.maxLon) / 2;
-  const zoom = Math.max(10, Math.min(17, fitZoom(bbox, WIDTH, HEIGHT, 90)));
+  // Leave room for the title, stop labels and attribution on still cards.
+  const zoom = Math.max(
+    10,
+    Math.min(17, fitZoom(bbox, WIDTH, HEIGHT, framePoints.length ? 90 : STILL_PADDING)),
+  );
   const bearingDeg = framing.length >= 2 ? bearing(framing[0], framing[framing.length - 1]) : 0;
   const origin = shape.points[0] ? { lat: shape.points[0].lat, lon: shape.points[0].lon } : null;
   const terminal = shape.points.at(-1)
@@ -126,7 +132,12 @@ function computeGapView(gap, shape, extraPoints = [], opts = {}) {
 }
 
 async function fetchGapBaseMap(view, options = {}) {
-  return renderStaticMap({ overlays: view.overlays, ...view, width: WIDTH, height: HEIGHT }, 20000, undefined, options);
+  return renderStaticMap(
+    { overlays: view.overlays, ...view, width: WIDTH, height: HEIGHT },
+    20000,
+    undefined,
+    options,
+  );
 }
 
 async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {
@@ -151,10 +162,7 @@ async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {
     markerLabelChip(placed[i].x, placed[i].y, BUS_MARKER_RADIUS, v.role),
   );
 
-  // Stop signs + name labels for the stops flanking the gap, so the map names
-  // the same stretch the post does ("between A and B"). Pushed off the route on
-  // the perpendicular, label riding outward past a bus marker so a bus parked at
-  // the stop can't bury it. Ported from cta-insights src/map/bus/gaps.js.
+  // Put each stop's sign and name in one callout, with room for a nearby bus.
   const stopElements = [];
   for (const s of opts.stopLabels || []) {
     if (s?.lat == null || s?.lon == null) continue;
@@ -169,21 +177,34 @@ async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {
     );
     if (x < 0 || x > WIDTH || y < 0 || y > HEIGHT) continue;
     const perp = perpendicularFromBearing(s.bearing ?? view.bearingDeg);
-    stopElements.push(buildStopMarker(x + perp.x * 26, y + perp.y * 26, STOP_MARKER_SIZE));
     const rawName = s.stopName || '';
-    if (!rawName) continue;
-    const fontSize = 16;
-    const labelH = 26;
-    const textW = await measureTextWidth(rawName, fontSize, { bold: true });
-    const boxW = textW + 16;
-    const labelOff = BUS_MARKER_RADIUS + labelH / 2 + 12;
-    const cx = x + perp.x * labelOff;
-    const cy = y + perp.y * labelOff;
-    const lx = Math.max(4, Math.min(WIDTH - boxW - 4, cx - boxW / 2));
-    const ly = Math.max(4, Math.min(HEIGHT - labelH - 4, cy - labelH / 2));
+    const fontSize = 20;
+    const labelH = STOP_MARKER_SIZE + 4;
+    const textW = rawName ? await measureTextWidth(rawName, fontSize, { bold: true }) : 0;
+    const boxW = STOP_MARKER_SIZE + (textW ? textW + 12 : 4);
+    const offset = BUS_MARKER_RADIUS + 22;
+    const ly = Math.max(4, Math.min(HEIGHT - MAP_FOOTER_HEIGHT - labelH - 4, y - labelH / 2));
+    const left = x - offset - boxW;
+    const right = x + offset;
+    const slots = perp.x < 0 ? [left, right] : [right, left];
+    const fits = (lx) => lx >= 4 && lx + boxW <= WIDTH - 4;
+    const lx =
+      slots.find(
+        (lx) =>
+          fits(lx) &&
+          !placed.some(
+            (bus) =>
+              bus.x > lx - BUS_MARKER_RADIUS - 6 &&
+              bus.x < lx + boxW + BUS_MARKER_RADIUS + 6 &&
+              Math.abs(bus.y - (ly + labelH / 2)) < BUS_MARKER_RADIUS + labelH / 2 + 6,
+          ),
+      ) ?? Math.max(4, Math.min(WIDTH - boxW - 4, slots.find(fits) ?? right));
+    const labelX = lx < x ? lx + boxW : lx;
     stopElements.push(
-      `<rect x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" width="${boxW.toFixed(1)}" height="${labelH}" fill="#000" fill-opacity="0.8" rx="3"/>`,
-      `<text x="${(lx + boxW / 2).toFixed(1)}" y="${(ly + 18).toFixed(1)}" fill="#fff" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="600">${xmlEscape(rawName)}</text>`,
+      `<line x1="${x}" y1="${y}" x2="${labelX}" y2="${ly + labelH / 2}" stroke="#fff" stroke-width="2"/>`,
+      `<rect x="${lx}" y="${ly}" width="${boxW}" height="${labelH}" fill="#000" fill-opacity="0.85" rx="4"/>`,
+      buildStopMarker(lx + 2 + STOP_MARKER_SIZE / 2, ly + labelH / 2, STOP_MARKER_SIZE),
+      `<text x="${lx + STOP_MARKER_SIZE + 6}" y="${ly + labelH / 2 + 7}" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700">${xmlEscape(rawName)}</text>`,
     );
   }
 
@@ -252,7 +273,15 @@ async function renderGapFrame(view, baseMap, gap, _stops = [], opts = {}) {
       WIDTH,
       HEIGHT,
     );
-    if (x < 0 || x > WIDTH || y < 0 || y > HEIGHT) continue;
+    const inset = TERMINAL_MARKER_RADIUS + 2;
+    if (
+      x < inset ||
+      x > WIDTH - inset ||
+      y < inset ||
+      y > HEIGHT - MAP_FOOTER_HEIGHT - inset ||
+      placed.some((bus) => Math.hypot(x - bus.x, y - bus.y) < inset + BUS_MARKER_RADIUS)
+    )
+      continue;
     terminalElements.push(...buildTerminalMarker(x, y, TERMINAL_MARKER_RADIUS, glyph));
   }
 

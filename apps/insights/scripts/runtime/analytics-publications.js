@@ -1,11 +1,12 @@
 const { buildRollupThread } = require('../../src/shared/post');
 const HOUR = 3600000;
+const MAP_MAX_AGE_MS = HOUR;
 function current(timestamp, enabledAt, now) {
   return (
     Number.isFinite(timestamp) &&
     timestamp > enabledAt &&
     timestamp <= now + 60000 &&
-    timestamp >= now - HOUR
+    timestamp >= now - MAP_MAX_AGE_MS
   );
 }
 function coverage(entry) {
@@ -106,6 +107,7 @@ function analyticsCandidates({ media = {}, analytics = {}, enabledAt, now, histo
       text,
       alt,
       image_url: chosen.image_url,
+      basemap: chosen.basemap,
     });
   }
   if (
@@ -142,4 +144,4 @@ function analyticsCandidates({ media = {}, analytics = {}, enabledAt, now, histo
   }
   return results;
 }
-module.exports = { analyticsCandidates, mapEligible, rollupEligible };
+module.exports = { analyticsCandidates, mapEligible, rollupEligible, MAP_MAX_AGE_MS };

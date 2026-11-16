@@ -1,8 +1,13 @@
 // One durable queue on the existing WAL database. Claims hold no transaction
 // during rendering. A killed worker's lease expires, including across deploys.
 const RENDER_VERSION = 2;
+const GAP_STILL_RENDER_VERSION = 3;
 const MAX_ATTEMPTS = 5;
 const LEASE_MS = 180000; // longer than the runtime's 120s worker deadline
+
+function stillRenderVersion(source) {
+  return source === 'gap' ? GAP_STILL_RENDER_VERSION : RENDER_VERSION;
+}
 
 function createMediaQueue(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS media_jobs (
@@ -119,4 +124,4 @@ function createMediaQueue(db) {
     },
   };
 }
-module.exports = { createMediaQueue, RENDER_VERSION, MAX_ATTEMPTS, LEASE_MS };
+module.exports = { createMediaQueue, stillRenderVersion, RENDER_VERSION, MAX_ATTEMPTS, LEASE_MS };

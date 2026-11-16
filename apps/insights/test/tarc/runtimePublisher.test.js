@@ -11,6 +11,7 @@ const bluesky = require('../../src/tarc/shared/bluesky');
 function setup(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tarc-runtime-publisher-'));
   const previous = { ...process.env };
+  delete process.env.PROTOMAPS_KEY;
   Object.assign(process.env, {
     TRANSIT_STATE_DIR: dir,
     TRANSIT_WEB_DIR: dir,
@@ -375,6 +376,117 @@ test('analytics publish frozen image-cohort facts to BUS without inventing incid
   } finally {
     db.close();
   }
+});
+
+test('a new observation waits for a verified street map before freezing the root', async (t) => {
+  const { dir, now, options, agents } = setup(t);
+  process.env.PROTOMAPS_KEY = 'test';
+  await main(options);
+  options.now += 1000;
+  options.events = [event('gap', options.now)];
+  const image = path.join(dir, 'media', 'gap.jpg');
+  fs.mkdirSync(path.dirname(image));
+  fs.writeFileSync(image, 'fallback image');
+  options.media = { gap: { image_url: '/data/media/gap.jpg', basemap: 'degraded' } };
+  assert.deepEqual(await main(options), { posted: 0, pending: 0 });
+
+  fs.writeFileSync(image, 'street image');
+  options.media.gap.basemap = 'street';
+  agents.BUS.uploadBlob = async (buffer) => {
+    assert.equal(Buffer.from(buffer).toString(), 'street image');
+    return { data: { blob: { ref: 'street-image' } } };
+  };
+  assert.equal((await main(options)).posted, 1);
+
+  options.now = now + 5 * 60000 + 2000;
+  for (const source of Object.values(options.health.sources)) source.source_timestamp = options.now;
+  options.events = [event('no-map', now + 2000, { routes: ['20'] })];
+  options.media['no-map'] = { image_url: '/data/media/gap.jpg', basemap: 'degraded' };
+  assert.equal((await main(options)).posted, 1);
+  assert.equal(agents.BUS.posted.at(-1).record.embed, undefined);
+});
+
+test('a degraded analytics map cannot displace a verified route candidate', async (t) => {
+  const { dir, options, agents } = setup(t);
+  process.env.PROTOMAPS_KEY = 'test';
+  await main(options);
+  options.now += 1000;
+  options.analyticsMedia = {
+    a: { ...analyticsMap('speedmap', options.now, '01'), basemap: 'degraded' },
+    b: { ...analyticsMap('speedmap', options.now, '03'), basemap: 'street' },
+  };
+  fs.mkdirSync(path.join(dir, 'media'));
+  for (const route of ['01', '03'])
+    fs.writeFileSync(path.join(dir, 'media', `speedmap-${route}.jpg`), 'fixture image');
+  agents.BUS.uploadBlob = async () => ({ data: { blob: { ref: 'street-image' } } });
+  assert.equal((await main(options)).posted, 1);
+  assert.match(agents.BUS.calls[0].text, /^Route 03 speedmap/);
+});
+
+test('replay replies wait for a verified street basemap', async (t) => {
+  const { dir, options, agents } = setup(t);
+  process.env.PROTOMAPS_KEY = 'test';
+  await main(options);
+  options.now += 1000;
+  options.events = [event('replay', options.now, { official_alert: { headline: 'Test alert' } })];
+  assert.equal((await main(options)).posted, 1);
+  const root = agents.ALERTS.posted[0];
+  fs.mkdirSync(path.join(dir, 'media'));
+  fs.writeFileSync(path.join(dir, 'media', 'replay.mp4'), 'fixture clip');
+  options.media = { replay: { video_url: '/data/media/replay.mp4' } };
+  options.adapter = {
+    ...bluesky,
+    postWithVideo: async (agent, text, _buffer, _alt, reply, key) =>
+      bluesky.postText(agent, text, reply, key),
+  };
+  assert.deepEqual(await main(options), { posted: 0, pending: 0 });
+  options.media.replay.video_basemap = 'street';
+  assert.equal((await main(options)).posted, 1);
+  assert.equal(agents.ALERTS.calls[1].reply.root.uri, root.uri);
+});
+
+test('pending legacy or expired map media cannot publish before the first attempt', async (t) => {
+  const { dir, now, options } = setup(t);
+  process.env.PROTOMAPS_KEY = 'test';
+  await main(options);
+  const db = new Database(path.join(dir, 'runtime-publisher.sqlite'));
+  t.after(() => db.close());
+  const insert = db.prepare(
+    "INSERT INTO runtime_outbox(event_id,part,account,route,payload,created_at) VALUES(?,'root','BUS','19',?,?)",
+  );
+  const images = [
+    ['legacy', event('legacy', now), undefined, 'unverified_basemap'],
+    ['old-gap', event('old-gap', now - 16 * 60000), 'street', 'publication_expired'],
+    [
+      'old-speed',
+      { analytics: { kind: 'speedmap', generated_at: now - 61 * 60000 } },
+      'street',
+      'publication_expired',
+    ],
+  ];
+  for (const [id, facts, basemap] of images) {
+    const media = path.join(dir, `${id}.jpg`);
+    fs.writeFileSync(media, 'frozen image');
+    insert.run(id, JSON.stringify({ kind: 'image', facts, media, basemap }), now);
+  }
+  const clip = path.join(dir, 'legacy.mp4');
+  fs.writeFileSync(clip, 'frozen clip');
+  db.prepare(
+    "INSERT INTO runtime_outbox(event_id,part,account,route,payload,created_at) VALUES(?,'video','BUS','19',?,?)",
+  ).run('legacy', JSON.stringify({ kind: 'video', facts: event('legacy', now), media: clip }), now);
+  assert.deepEqual(await main(options), { posted: 0, pending: 0 });
+  const status = db.prepare(
+    "SELECT status,last_error,attempts FROM runtime_outbox WHERE event_id=? AND part='root'",
+  );
+  for (const [id, , , reason] of images) {
+    assert.deepEqual(status.get(id), { status: 'skipped', last_error: reason, attempts: 0 });
+    assert.equal(fs.existsSync(path.join(dir, `${id}.jpg`)), false);
+  }
+  assert.equal(
+    db.prepare("SELECT status FROM runtime_outbox WHERE part='video'").get().status,
+    'skipped',
+  );
+  assert.equal(fs.existsSync(clip), false);
 });
 
 test('ALERTS lane stays frozen across retry when later annotations change', async (t) => {
